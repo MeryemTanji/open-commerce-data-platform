@@ -74,8 +74,6 @@ Dashboards • APIs • Apps
 
 > A detailed architecture diagram will be added as the platform evolves.
 
- > A detailed architecture diagram will be added as the platform evolves.
-
 ---
 
 ## Core Capabilities
