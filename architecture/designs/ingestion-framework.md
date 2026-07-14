@@ -72,3 +72,88 @@ flowchart LR
     C --> D[Immutable Raw File]
     D --> E[Ingestion Metadata]
     E --> F[Raw Landing Zone]
+```
+
+---
+
+## Connector Responsibilities
+
+Each source connector is responsible for:
+
+1. locating or retrieving the source data;
+2. confirming that the source is accessible;
+3. performing basic structural validation;
+4. preserving the source data in the Raw Landing layer;
+5. collecting ingestion metadata;
+6. returning a clear execution result;
+7. raising meaningful errors when ingestion fails.
+
+A connector must not:
+
+- rename business fields;
+- apply business rules;
+- deduplicate records;
+- enrich source data;
+- join multiple sources;
+- create canonical entities;
+- calculate business metrics.
+
+These restrictions preserve the boundary between ingestion and transformation.
+
+---
+
+## Shared Platform Responsibilities
+
+Common ingestion capabilities should be implemented once and reused by every connector.
+
+These include:
+
+- configuration loading;
+- raw landing path generation;
+- structured logging;
+- UTC timestamp generation;
+- ingestion identifier generation;
+- checksum calculation;
+- metadata serialization;
+- common exception handling;
+- execution status reporting.
+
+This separation keeps each connector focused on source-specific extraction while Mercury provides the surrounding platform behaviour.
+
+---
+
+## Proposed Repository Structure
+
+```text
+ingestion/
+├── src/
+│   └── mercury_ingestion/
+│       ├── connectors/
+│       │   ├── base.py
+│       │   └── customers.py
+│       ├── common/
+│       │   ├── config.py
+│       │   ├── exceptions.py
+│       │   ├── logging.py
+│       │   ├── metadata.py
+│       │   └── storage.py
+│       └── runner.py
+├── tests/
+├── pyproject.toml
+└── README.md
+```
+
+---
+
+## First Vertical Slice
+
+The first implementation will ingest the customer dataset.
+
+```mermaid
+flowchart LR
+    A[Olist Customer CSV] --> B[Customer Connector]
+    B --> C[Structural Validation]
+    C --> D[Immutable Local Raw File]
+    B --> E[Ingestion Metadata]
+    D --> F[Automated Verification]
+    E --> F
