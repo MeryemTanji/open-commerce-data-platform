@@ -1,20 +1,22 @@
 # Mercury
 
-> A cloud-native commerce data platform built on Google Cloud.
+> A cloud-native data foundation platform demonstrated through a modern commerce implementation.
 
-Mercury is an end-to-end commerce data platform that demonstrates how modern organizations build reliable, cloud-native data systems.
+Mercury is an end-to-end cloud-native data foundation platform that demonstrates how modern organizations can build reusable, scalable analytics infrastructure.
 
-The platform ingests raw operational data, transforms it into trusted analytical models, and publishes reusable data products for business intelligence, operational reporting, and machine learning.
+Rather than building project-specific pipelines, Mercury focuses on creating a standardized data foundation that transforms raw operational data into trusted, reusable data products.
 
 ---
 
 ## Why Mercury?
 
-Modern e-commerce businesses generate data across many operational systems including orders, customers, payments, products, reviews, and logistics.
+Many organisations invest significant engineering effort preparing data before they can generate business value.
 
-Without a structured data platform, these systems often lead to inconsistent reporting, duplicated business logic, and unreliable metrics.
+Operational data often arrives from multiple systems in inconsistent formats, transformation logic is duplicated across projects, and analytical solutions become tightly coupled to individual use cases.
 
-Mercury demonstrates how these disconnected operational datasets can be transformed into governed, reusable data products through modern Analytics Engineering practices.
+Mercury demonstrates an alternative approach.
+
+Instead of building isolated pipelines, Mercury establishes a reusable data foundation that standardises ingestion, modelling, testing and publishing so future analytics, reporting and machine learning solutions can build upon the same trusted platform.
 
 ---
 
@@ -22,23 +24,31 @@ Mercury demonstrates how these disconnected operational datasets can be transfor
 
 Mercury is intentionally built as if it were the internal data platform of a growing e-commerce company.
 
-Every architectural decision, repository structure, and engineering practice reflects how a modern platform engineering team would design, build, and operate production analytics infrastructure.
+The platform prioritises reusable capabilities over project-specific solutions.
 
-The goal is not to build a tutorial project.
+Every architectural decision is evaluated against one question:
 
-The goal is to build a platform.
+> Does this strengthen the platform for future use cases?
+
+The goal is not to build another data pipeline.
+
+The goal is to build a reusable data foundation.
+
+Mercury is built on one simple belief:
+
+Future innovation should focus on creating business value—not rebuilding data foundations.
 
 ---
 
 ## Overview
 
-Mercury is a cloud-native commerce data platform that transforms raw operational data into trusted, reusable data products.
+Mercury follows a layered architecture that separates operational data ingestion, standardisation, business modelling and data product generation.
 
-Built using modern Analytics Engineering and Data Engineering practices, Mercury demonstrates how organizations design scalable data platforms using layered architecture, infrastructure as code, automated testing, and cloud-native services.
+Each layer has a clearly defined responsibility, allowing the platform to evolve incrementally while maintaining consistency across data products.
+
+This architecture enables new analytical use cases to reuse existing platform capabilities rather than rebuilding transformation logic for every project.
 
 ---
-
-## Architecture
 
 ## Architecture
 
@@ -78,15 +88,15 @@ Dashboards • APIs • Apps
 
 ## Core Capabilities
 
-- Data ingestion
-- Immutable raw storage
+- Standardised source ingestion
+- Immutable raw data storage
+- Layered data transformation
+- Canonical business modelling
+- Reusable data products
 - Data quality validation
-- Dimensional modelling
-- Feature engineering
-- Data products
 - Infrastructure as Code
-- Observability
-- CI/CD
+- Platform observability
+- Automated deployment
 
 ---
 
