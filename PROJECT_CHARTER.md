@@ -2,30 +2,27 @@
 
 ## 1. Vision
 
-Build a production-inspired e-commerce data platform that ingests,
-transforms, validates, and publishes trusted data products using modern
-Analytics Engineering and Data Engineering practices.
+Build a reusable cloud-native data foundation that transforms raw operational data into trusted, reusable data products.
 
-The first implementation focuses on e-commerce, while shared capabilities
-such as ingestion, testing, orchestration, observability, security, and
-deployment are designed to be reusable.
+Mercury demonstrates how modern organizations can standardize data ingestion, transformation, testing, and publishing through a layered platform architecture.
+
+The first implementation focuses on e-commerce using publicly available datasets, while the platform itself is intentionally designed so its architectural patterns can be applied across industries.
+
+Mercury is founded on one simple principle:
+
+Future innovation should focus on creating business value rather than rebuilding data foundations.
 
 ## 2. Problem Statement
 
-E-commerce data is commonly distributed across systems responsible for
-customers, orders, products, payments, sellers, reviews, and delivery events.
+Many organizations generate operational data across multiple independent systems.
 
-Without a reliable data platform, these sources can produce:
+Over time, project-specific pipelines, duplicated transformation logic, inconsistent business definitions, and isolated analytical solutions create significant engineering overhead.
 
-- inconsistent business definitions;
-- duplicated or incomplete records;
-- unreliable reporting;
-- limited visibility into data quality;
-- tightly coupled source-to-dashboard pipelines;
-- difficulty reproducing or reprocessing historical data.
+As new business requirements emerge, engineering teams often spend more time rebuilding data foundations than delivering business value.
 
-This project will build a layered platform that converts raw source data into
-tested and documented data products.
+Mercury addresses this challenge by establishing a reusable data foundation that standardizes ingestion, modelling, testing, and publishing.
+
+The objective is to enable future analytical use cases to build upon trusted platform capabilities rather than recreating them for every project.
 
 ## 3. Target Users
 
@@ -37,6 +34,7 @@ The platform supports:
 - Data Scientists
 - Operations teams
 - Commercial and product stakeholders
+- Platform Engineers
 - Applications consuming curated data products
 
 ## 4. Primary Use Cases
@@ -97,7 +95,7 @@ The initial domain model includes:
 
 ## 6. Platform Layers
 
-1. Source data
+1. Operational source systems
 2. Immutable raw storage
 3. Staging and standardization
 4. Core dimensional model
@@ -108,23 +106,23 @@ The initial domain model includes:
 
 The platform will provide:
 
-- repeatable source ingestion;
-- immutable raw payload retention;
-- ingestion audit metadata;
-- standardized transformations;
-- dimensional data modeling;
-- automated data quality tests;
+- standardized source ingestion;
+- immutable raw data retention;
+- reusable transformation patterns;
+- canonical business modelling;
+- automated data quality validation;
+- reusable data products;
 - orchestration;
-- structured logging and observability;
+- observability;
 - infrastructure as code;
 - automated testing and deployment;
-- documented and versioned data products.
+- documented architecture and engineering decisions.
 
 ## 8. Version 1 Scope
 
 Version 1 will include:
 
-- one public e-commerce dataset;
+- public e-commerce datasets representing multiple operational systems;
 - local ingestion using Python;
 - raw files stored without modification;
 - raw data loaded into BigQuery;
@@ -160,19 +158,19 @@ Version 1 is successful when:
 5. Sales and customer data products are available to consumers.
 6. A dashboard or application demonstrates business value.
 7. The platform can be deployed from documented code.
-8. A new source can reuse the established ingestion and quality patterns.
+8. New analytical use cases can reuse existing platform capabilities without redesigning the architecture.
 
-## 11. Portfolio Goal
+## 11. Engineering Objectives
 
-This repository should demonstrate:
+Mercury is designed to demonstrate modern data platform engineering practices including:
 
-- Python and SQL development;
-- dimensional data modeling;
-- Analytics Engineering;
-- cloud data engineering;
-- automated testing;
-- orchestration;
+- cloud-native architecture;
+- reusable ingestion patterns;
+- layered data modelling;
+- dimensional warehouse design;
+- data quality engineering;
 - observability;
 - infrastructure as code;
-- CI/CD;
-- architecture decisions and engineering trade-offs.
+- continuous integration and deployment;
+- architectural decision making;
+- reusable data products.
