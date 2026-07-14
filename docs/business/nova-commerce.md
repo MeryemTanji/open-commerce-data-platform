@@ -2,7 +2,7 @@
 
 ## Overview
 
-Nova Commerce is a fictional European e-commerce retailer used as the business domain for Mercury.
+Nova Commerce is a fictional European e-commerce retailer used as Mercury's reference implementation.
 
 The company sells modern lifestyle products through its online storefront and mobile application.
 
