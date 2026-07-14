@@ -139,10 +139,10 @@ Dashboards • APIs • Apps
 ### Phase 0 — Foundation
 - [x] Project Charter
 - [x] Repository Structure
-- [ ] Architecture Documentation
+- [x] Architecture Documentation
 
 ### Phase 1 — Local Development
-- [ ] Source Connectors
+- [ ] Reusable Source Connector Framework
 - [ ] Raw Landing Zone
 - [ ] Initial Transformations
 
