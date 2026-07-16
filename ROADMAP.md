@@ -52,18 +52,20 @@ Each completed milestone represents a meaningful addition to the platform.
 - [x] IngestionMetadata
 - [x] LocalStorageManager
 - [x] BaseConnector
-- [ ] CustomerConnector
+- [x] CustomerConnector
 - [ ] OrdersConnector
 - [ ] ProductsConnector
 - [ ] SellersConnector
 - [ ] PaymentsConnector
 - [ ] ReviewsConnector
 - [ ] GeolocationConnector
-- [ ] Runner
+- [x] Runner
 
 ### Local Raw Landing
 
-- [ ] First successful customer ingestion
+- [x] First successful customer ingestion
+- [x] Verify customer raw file integrity with SHA-256
+- [x] Execute CustomerConnector through IngestionRunner
 - [ ] First successful orders ingestion
 - [ ] First successful products ingestion
 - [ ] First successful payments ingestion
@@ -76,8 +78,10 @@ Each completed milestone represents a meaningful addition to the platform.
 - [x] Metadata tests
 - [x] Storage tests
 - [x] Base connector tests
-- [ ] Customer connector tests
-- [ ] End-to-end ingestion tests
+- [x] Customer connector tests
+- [x] Runner tests
+- [x] End-to-end customer ingestion test
+- [ ] Multi-connector end-to-end ingestion tests
 
 ---
 
@@ -259,8 +263,37 @@ These are intentionally out of scope for Version 1 but are potential future enha
 
 ### Phase 1 — Local Development
 
-🟩🟩🟩⬜⬜⬜⬜⬜
+🟩🟩🟩🟩🟩⬜⬜⬜
 
 Current milestone:
 
-➡ Implement CustomerConnector
+➡ Complete remaining source connectors
+
+---
+
+# Sprint Log
+
+## Day 1
+
+- [x] Repository created
+- [x] Mercury vision established
+- [x] Project charter completed
+- [x] README created
+
+## Day 2
+
+- [x] Nova Commerce business context documented
+- [x] Architecture documentation created
+- [x] Foundational ADRs completed
+- [x] Ingestion framework designed
+
+## Day 3
+
+- [x] IngestionMetadata implemented
+- [x] LocalStorageManager implemented
+- [x] BaseConnector implemented
+- [x] CustomerConnector implemented
+- [x] IngestionRunner implemented
+- [x] First real Olist customer ingestion completed
+- [x] Raw file integrity verified with SHA-256
+- [x] Full automated test suite passed
