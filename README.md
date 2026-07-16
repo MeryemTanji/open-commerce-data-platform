@@ -142,8 +142,8 @@ Dashboards • APIs • Apps
 - [x] Architecture Documentation
 
 ### Phase 1 — Local Development
-- [ ] Reusable Source Connector Framework
-- [ ] Raw Landing Zone
+- [x] Reusable Source Connector Framework
+- [x] Raw Landing Zone
 - [ ] Initial Transformations
 
 ### Phase 2 — Cloud Platform
