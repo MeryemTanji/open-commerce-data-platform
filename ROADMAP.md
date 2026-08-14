@@ -81,7 +81,7 @@ Each completed milestone represents a meaningful addition to the platform.
 - [x] Customer connector tests
 - [x] Runner tests
 - [x] End-to-end customer ingestion test
-- [ ] Multi-connector end-to-end ingestion tests
+- [x] Multi-connector end-to-end ingestion tests
 
 ---
 
@@ -297,3 +297,11 @@ Current milestone:
 - [x] First real Olist customer ingestion completed
 - [x] Raw file integrity verified with SHA-256
 - [x] Full automated test suite passed
+
+## Day 4
+
+- [x] OrdersConnector implemented
+- [x] Orders connector test suite passed
+- [x] Real Olist orders ingestion completed
+- [x] Orders raw integrity verified
+- [x] Customers + Orders executed successfully in one batch
