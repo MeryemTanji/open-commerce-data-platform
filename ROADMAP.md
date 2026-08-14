@@ -307,3 +307,11 @@ Current milestone:
 - [x] Real Olist orders ingestion completed
 - [x] Orders raw integrity verified
 - [x] Customers + Orders executed successfully in one batch
+
+## Day 5
+
+- [x] Designed OrderItemsConnector contract
+- [x] Implemented OrderItemsConnector
+- [x] Order-items test suite passed
+- [x] Real Olist order-items ingestion completed
+- [x] Raw file integrity verified with SHA-256
