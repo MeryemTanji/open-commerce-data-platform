@@ -53,7 +53,7 @@ Each completed milestone represents a meaningful addition to the platform.
 - [x] LocalStorageManager
 - [x] BaseConnector
 - [x] CustomerConnector
-- [ ] OrdersConnector
+- [x] OrdersConnector
 - [ ] ProductsConnector
 - [ ] SellersConnector
 - [ ] PaymentsConnector
@@ -66,7 +66,7 @@ Each completed milestone represents a meaningful addition to the platform.
 - [x] First successful customer ingestion
 - [x] Verify customer raw file integrity with SHA-256
 - [x] Execute CustomerConnector through IngestionRunner
-- [ ] First successful orders ingestion
+- [x] First successful orders ingestion
 - [ ] First successful products ingestion
 - [ ] First successful payments ingestion
 - [ ] First successful reviews ingestion
