@@ -57,9 +57,9 @@ Each completed milestone represents a meaningful addition to the platform.
 - [x] OrderItemsConnector
 - [x] ProductsConnector
 - [x] SellersConnector
-- [ ] PaymentsConnector
-- [ ] ReviewsConnector
-- [ ] GeolocationConnector
+- [x] PaymentsConnector
+- [x] ReviewsConnector
+- [x] GeolocationConnector
 - [x] Runner
 
 ### Local Raw Landing
@@ -75,9 +75,9 @@ Each completed milestone represents a meaningful addition to the platform.
 - [x] Verify products raw file integrity with SHA-256
 - [x] First successful sellers ingestion
 - [x] Verify sellers raw file integrity with SHA-256
-- [ ] First successful payments ingestion
-- [ ] First successful reviews ingestion
-- [ ] First successful geolocation ingestion
+- [x] First successful payments ingestion
+- [x] First successful reviews ingestion
+- [x] First successful geolocation ingestion
 
 ### Testing
 
@@ -92,14 +92,14 @@ Each completed milestone represents a meaningful addition to the platform.
 - [x] Runner tests
 - [x] End-to-end customer ingestion test
 - [x] Multi-connector end-to-end ingestion tests
-- [ ] End-to-end ingestion test across all source connectors
+- [x] End-to-end ingestion test across all source connectors
 
 ### Framework Review
 
-- [ ] Complete remaining CSV connectors
-- [ ] Review repeated CSV connector patterns
-- [ ] Decide whether a shared CSV connector abstraction is justified
-- [ ] Refactor shared CSV behavior if justified by completed connector implementations
+- [x] Complete remaining CSV connectors
+- [x] Review repeated CSV connector patterns
+- [x] Decide whether a shared CSV connector abstraction is justified
+- [x] Refactor shared CSV behavior if justified by completed connector implementations
 
 ---
 
@@ -282,27 +282,9 @@ These are intentionally out of scope for Version 1 but are potential future enha
 
 ✅ Complete
 
-### Phase 1 — Local Ingestion Framework
+### Phase 1 — Local Development
 
-🟩🟩🟩🟩🟩🟩⬜⬜
-
-Current milestone:
-
-➡ Complete remaining source connectors
-
-Completed source connectors:
-
-- Customers ✅
-- Orders ✅
-- Order Items ✅
-- Products ✅
-- Sellers ✅
-
-Remaining source connectors:
-
-- Payments
-- Reviews
-- Geolocation
+✅ Complete
 
 ---
 
@@ -379,3 +361,19 @@ Remaining source connectors:
 - [x] Maintained the boundary between technical ingestion validation and business data quality
 - [x] Preserved source semantics in the immutable Raw layer
 - [x] Deliberately deferred CSV abstraction until enough connector implementations exist to identify stable shared behavior
+
+## Day 6
+
+- [x] PaymentsConnector implemented and validated
+- [x] ReviewsConnector implemented and validated
+- [x] GeolocationConnector implemented and validated
+- [x] All eight Olist source connectors completed
+- [x] Full eight-source ingestion batch completed successfully
+- [x] 1,550,851 source records ingested in one batch
+- [x] Reviewed repeated CSV connector patterns
+- [x] ADR-005 documented shared CSV connector abstraction
+- [x] BaseCsvConnector implemented
+- [x] Eight concrete connectors refactored to use BaseCsvConnector
+- [x] Full regression suite passed — 478 tests
+- [x] Post-refactor eight-source integration batch passed
+- [x] Post-refactor record counts and SHA-256 checksums remained unchanged

@@ -220,3 +220,4 @@ __marimo__/
 # Datasets
 data/source/
 data/raw/
+data/batch_validation
