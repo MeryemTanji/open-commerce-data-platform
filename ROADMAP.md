@@ -55,8 +55,8 @@ Each completed milestone represents a meaningful addition to the platform.
 - [x] CustomerConnector
 - [x] OrdersConnector
 - [x] OrderItemsConnector
-- [ ] ProductsConnector
-- [ ] SellersConnector
+- [x] ProductsConnector
+- [x] SellersConnector
 - [ ] PaymentsConnector
 - [ ] ReviewsConnector
 - [ ] GeolocationConnector
@@ -68,11 +68,15 @@ Each completed milestone represents a meaningful addition to the platform.
 - [x] Verify customer raw file integrity with SHA-256
 - [x] Execute CustomerConnector through IngestionRunner
 - [x] First successful orders ingestion
+- [x] Verify orders raw file integrity with SHA-256
 - [x] First successful order-items ingestion
-- [ ] First successful products ingestion
+- [x] Verify order-items raw file integrity with SHA-256
+- [x] First successful products ingestion
+- [x] Verify products raw file integrity with SHA-256
+- [x] First successful sellers ingestion
+- [x] Verify sellers raw file integrity with SHA-256
 - [ ] First successful payments ingestion
 - [ ] First successful reviews ingestion
-- [ ] First successful sellers ingestion
 - [ ] First successful geolocation ingestion
 
 ### Testing
@@ -81,9 +85,21 @@ Each completed milestone represents a meaningful addition to the platform.
 - [x] Storage tests
 - [x] Base connector tests
 - [x] Customer connector tests
+- [x] Orders connector tests
+- [x] Order-items connector tests
+- [x] Products connector tests
+- [x] Sellers connector tests
 - [x] Runner tests
 - [x] End-to-end customer ingestion test
 - [x] Multi-connector end-to-end ingestion tests
+- [ ] End-to-end ingestion test across all source connectors
+
+### Framework Review
+
+- [ ] Complete remaining CSV connectors
+- [ ] Review repeated CSV connector patterns
+- [ ] Decide whether a shared CSV connector abstraction is justified
+- [ ] Refactor shared CSV behavior if justified by completed connector implementations
 
 ---
 
@@ -129,10 +145,12 @@ Each completed milestone represents a meaningful addition to the platform.
 
 - [ ] stg_customers
 - [ ] stg_orders
+- [ ] stg_order_items
 - [ ] stg_products
 - [ ] stg_sellers
 - [ ] stg_payments
 - [ ] stg_reviews
+- [ ] stg_geolocation
 
 ### Canonical Model
 
@@ -149,6 +167,7 @@ Each completed milestone represents a meaningful addition to the platform.
 ### Data Quality
 
 - [ ] Primary key tests
+- [ ] Composite key tests
 - [ ] Not null tests
 - [ ] Referential integrity
 - [ ] Business rule assertions
@@ -263,13 +282,27 @@ These are intentionally out of scope for Version 1 but are potential future enha
 
 ✅ Complete
 
-### Phase 1 — Local Development
+### Phase 1 — Local Ingestion Framework
 
-🟩🟩🟩🟩🟩⬜⬜⬜
+🟩🟩🟩🟩🟩🟩⬜⬜
 
 Current milestone:
 
 ➡ Complete remaining source connectors
+
+Completed source connectors:
+
+- Customers ✅
+- Orders ✅
+- Order Items ✅
+- Products ✅
+- Sellers ✅
+
+Remaining source connectors:
+
+- Payments
+- Reviews
+- Geolocation
 
 ---
 
@@ -305,13 +338,44 @@ Current milestone:
 - [x] OrdersConnector implemented
 - [x] Orders connector test suite passed
 - [x] Real Olist orders ingestion completed
-- [x] Orders raw integrity verified
+- [x] Orders raw integrity verified with SHA-256
 - [x] Customers + Orders executed successfully in one batch
 
 ## Day 5
 
+### Order Items
+
 - [x] Designed OrderItemsConnector contract
+- [x] Defined order-item grain and composite source key
 - [x] Implemented OrderItemsConnector
-- [x] Order-items test suite passed
+- [x] Order-items connector test suite passed
 - [x] Real Olist order-items ingestion completed
 - [x] Raw file integrity verified with SHA-256
+
+### Products
+
+- [x] Designed ProductsConnector contract
+- [x] Defined product grain and source key
+- [x] Implemented ProductsConnector
+- [x] Products connector test suite passed
+- [x] Real Olist products ingestion completed
+- [x] Raw file integrity verified with SHA-256
+- [x] Preserved source column semantics in Raw
+- [x] Deferred product-category translation to downstream modelling
+
+### Sellers
+
+- [x] Designed SellersConnector contract
+- [x] Defined seller grain and source key
+- [x] Implemented SellersConnector
+- [x] Sellers connector test suite passed
+- [x] Real Olist sellers ingestion completed
+- [x] Raw file integrity verified with SHA-256
+
+### Engineering Lessons
+
+- [x] Applied dataset grain concepts to order-level and item-level sources
+- [x] Identified composite source keys without enforcing business uniqueness during ingestion
+- [x] Maintained the boundary between technical ingestion validation and business data quality
+- [x] Preserved source semantics in the immutable Raw layer
+- [x] Deliberately deferred CSV abstraction until enough connector implementations exist to identify stable shared behavior
