@@ -141,25 +141,38 @@ Dashboards • APIs • Apps
 - [x] Repository Structure
 - [x] Architecture Documentation
 
-### Phase 1 — Local Development
+### Phase 1 — Local Ingestion Framework
 - [x] Reusable Source Connector Framework
-- [x] Raw Landing Zone
-- [ ] Initial Transformations
+- [x] Local Raw Landing Zone
+- [x] CSV Connector Abstraction
+- [x] Storage Abstraction
 
-### Phase 2 — Cloud Platform
-- [ ] BigQuery
-- [ ] Cloud Storage
-- [ ] Dataform
+### Phase 2 — Cloud Data Foundation
+- [x] Google Cloud Project & Development Environment
+- [x] Cloud Storage Raw Landing Zone
+- [x] GCS Storage Backend
+- [ ] BigQuery Raw Loading
+- [ ] Ingestion Metadata Persistence
+- [ ] Dataform Project Setup
 
-### Phase 3 — Production
+### Phase 3 — Transformation & Modeling
+- [ ] Staging Models
+- [ ] Core Canonical Model
+- [ ] Data Quality Assertions
+- [ ] Feature Layer
+
+### Phase 4 — Production Engineering
 - [ ] Terraform
 - [ ] Cloud Run
+- [ ] Cloud Scheduler / Workflows
 - [ ] CI/CD
+- [ ] Observability
 
-### Phase 4 — Data Products
+### Phase 5 — Data Products
 - [ ] Customer 360
 - [ ] Sales Analytics
 - [ ] Delivery Analytics
+- [ ] ML / Feature Use Cases
 
 ---
 
