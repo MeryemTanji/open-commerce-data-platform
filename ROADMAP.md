@@ -377,3 +377,26 @@ These are intentionally out of scope for Version 1 but are potential future enha
 - [x] Full regression suite passed — 478 tests
 - [x] Post-refactor eight-source integration batch passed
 - [x] Post-refactor record counts and SHA-256 checksums remained unchanged
+
+### Day 7 — Cloud Raw Landing & Storage Abstraction
+
+- [x] Review local storage architecture before introducing cloud storage
+- [x] Document storage abstraction decision in ADR-006
+- [x] Introduce `StorageManager` abstraction
+- [x] Refactor `LocalStorageManager` to implement the shared storage contract
+- [x] Update `BaseConnector` to depend on `StorageManager` rather than local storage
+- [x] Verify all eight connectors remain storage-backend agnostic
+- [x] Add abstraction-level tests and preserve existing local behavior
+- [x] Implement `GCSStorageManager`
+- [x] Configure Google Cloud authentication using Application Default Credentials
+- [x] Preserve the existing Raw Landing hierarchy in Google Cloud Storage
+- [x] Implement atomic create-only GCS uploads using generation preconditions
+- [x] Preserve SHA-256 integrity metadata across local and cloud storage backends
+- [x] Verify single-source ingestion against the real GCS bucket
+- [x] Independently verify local and downloaded GCS SHA-256 hashes match
+- [x] Verify duplicate ingestion is rejected without overwriting the existing Raw artifact
+- [x] Run the complete automated test suite — 508 tests passing
+- [x] Run all eight connectors against GCS successfully
+- [x] Validate 1,550,851 total source records landed across the eight-source cloud batch
+
+**Outcome:** Mercury now supports interchangeable local and Google Cloud Storage Raw Landing backends through a common storage abstraction. All eight source connectors can land immutable, byte-preserved source artifacts to GCS without cloud-specific connector logic. The cloud Raw Landing layer is validated and ready to become the source for BigQuery Raw loading.
