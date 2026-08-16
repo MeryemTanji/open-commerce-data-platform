@@ -20,7 +20,7 @@ from __future__ import annotations
 import csv
 from pathlib import Path
 
-from mercury_ingestion.common.storage import LocalStorageManager
+from mercury_ingestion.common.storage import StorageManager
 from mercury_ingestion.connectors.base import BaseConnector
 
 _ENCODING = "utf-8-sig"
@@ -41,7 +41,7 @@ class BaseCsvConnector(BaseConnector):
         source_system: str,
         source_object: str,
         required_columns: frozenset[str],
-        storage_manager: LocalStorageManager,
+        storage_manager: StorageManager,
         schema_version: str | None = "1.0",
     ) -> None:
         super().__init__(

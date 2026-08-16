@@ -10,7 +10,7 @@ from pathlib import Path
 import pytest
 
 from mercury_ingestion.common import storage as storage_module
-from mercury_ingestion.common.storage import LocalStorageManager, StorageResult
+from mercury_ingestion.common.storage import LocalStorageManager, StorageManager, StorageResult
 
 INGESTION_DATE = date(2026, 7, 14)
 
@@ -350,3 +350,19 @@ class TestAtomicCopyFailureCleanup:
             ingestion_date=INGESTION_DATE,
         )
         assert Path(result.landing_path).exists()
+
+
+class TestStorageManagerAbstraction:
+    """Tests for the StorageManager capability contract (ADR-006)."""
+
+    def test_local_storage_manager_is_instance_of_storage_manager(self, tmp_path: Path) -> None:
+        manager = LocalStorageManager(tmp_path / "landing")
+
+        assert isinstance(manager, StorageManager)
+
+    def test_local_storage_manager_is_subclass_of_storage_manager(self) -> None:
+        assert issubclass(LocalStorageManager, StorageManager)
+
+    def test_storage_manager_cannot_be_instantiated_directly(self) -> None:
+        with pytest.raises(TypeError):
+            StorageManager()  # type: ignore[abstract]

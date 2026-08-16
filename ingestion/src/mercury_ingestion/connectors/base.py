@@ -15,7 +15,7 @@ from datetime import date, datetime, timezone
 from pathlib import Path
 
 from mercury_ingestion.common.metadata import IngestionMetadata, IngestionStatus
-from mercury_ingestion.common.storage import LocalStorageManager
+from mercury_ingestion.common.storage import StorageManager
 
 
 def _require_non_blank(value: str, field_name: str) -> None:
@@ -67,13 +67,13 @@ class BaseConnector(ABC):
         source_file: Path,
         source_system: str,
         source_object: str,
-        storage_manager: LocalStorageManager,
+        storage_manager: StorageManager,
         schema_version: str | None = None,
     ) -> None:
         if not isinstance(source_file, Path):
             raise TypeError("source_file must be a pathlib.Path")
-        if not isinstance(storage_manager, LocalStorageManager):
-            raise TypeError("storage_manager must be a LocalStorageManager")
+        if not isinstance(storage_manager, StorageManager):
+            raise TypeError("storage_manager must be a StorageManager")
 
         _require_non_blank(source_system, "source_system")
         _require_non_blank(source_object, "source_object")

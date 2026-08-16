@@ -107,19 +107,19 @@ Each completed milestone represents a meaningful addition to the platform.
 
 ## Google Cloud
 
-- [ ] Create GCP project
-- [ ] Enable required APIs
-- [ ] Configure authentication
+- [x] Create GCP project
+- [x] Enable required APIs
+- [x] Configure authentication
 
 ## Storage
 
-- [ ] Create Cloud Storage bucket
-- [ ] Implement GCSStorageManager
-- [ ] Upload raw files to Cloud Storage
+- [x] Create Cloud Storage bucket
+- [x] Implement GCSStorageManager
+- [x] Upload raw files to Cloud Storage
 
 ## BigQuery
 
-- [ ] Create datasets
+- [x] Create datasets
 - [ ] Create raw layer
 - [ ] Load raw source tables
 - [ ] Create ingestion audit table

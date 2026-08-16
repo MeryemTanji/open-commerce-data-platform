@@ -221,3 +221,4 @@ __marimo__/
 data/source/
 data/raw/
 data/batch_validation
+data/gcs_validation

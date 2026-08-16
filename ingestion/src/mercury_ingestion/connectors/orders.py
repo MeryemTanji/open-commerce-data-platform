@@ -21,7 +21,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import final
 
-from mercury_ingestion.common.storage import LocalStorageManager
+from mercury_ingestion.common.storage import StorageManager
 from mercury_ingestion.connectors.csv_base import BaseCsvConnector
 
 REQUIRED_COLUMNS = frozenset(
@@ -59,7 +59,7 @@ class OrdersConnector(BaseCsvConnector):
     def __init__(
         self,
         source_file: Path,
-        storage_manager: LocalStorageManager,
+        storage_manager: StorageManager,
         schema_version: str | None = "1.0",
     ) -> None:
         super().__init__(

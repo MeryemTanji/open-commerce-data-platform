@@ -7,7 +7,10 @@ name = "mercury-ingestion"
 version = "0.1.0"
 description = "Reusable ingestion framework for the Mercury data platform."
 requires-python = ">=3.11"
-dependencies = []
+dependencies = [
+    "google-cloud-storage>=3.13.1",
+    "google-cloud-bigquery>=3.43.0",
+]
 
 [project.optional-dependencies]
 dev = [

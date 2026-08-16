@@ -1,16 +1,22 @@
-"""Local filesystem implementation of Mercury's Raw Landing storage.
+"""Mercury's Raw Landing storage capability and its local implementation.
 
-This module preserves source files unchanged in an immutable, date-
-partitioned landing zone and returns the technical facts (path, checksum,
-size) needed to build ingestion metadata elsewhere. It intentionally does
-not parse file content, count records, validate business rules, or talk to
-any cloud service — those concerns belong to other components.
+This module defines ``StorageManager``, the narrow abstract capability
+contract for landing one immutable Raw source artifact, and
+``LocalStorageManager``, the local-filesystem implementation of that
+contract. The local implementation preserves source files unchanged in
+an immutable, date-partitioned landing zone and returns the technical
+facts (path, checksum, size) needed to build ingestion metadata
+elsewhere. It intentionally does not parse file content, count records,
+validate business rules, or talk to any cloud service — those concerns
+belong to other components. A future ``GCSStorageManager`` will provide
+the same ``StorageManager`` contract against Google Cloud Storage.
 """
 
 from __future__ import annotations
 
 import hashlib
 import shutil
+from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
@@ -67,7 +73,32 @@ def _sha256_of(path: Path) -> str:
     return hasher.hexdigest()
 
 
-class LocalStorageManager:
+class StorageManager(ABC):
+    """Capability contract for Mercury's Raw Landing storage.
+
+    Describes exactly one capability: land one immutable Raw source
+    artifact and return the technical facts needed to build ingestion
+    metadata. Deliberately narrow — it does not cover reading, deleting,
+    listing, existence checks, warehouse loading, retries, or
+    authentication, since none of those are required by the connector
+    lifecycle today. Concrete implementations (e.g. local filesystem,
+    and later Google Cloud Storage) provide the same behavior on
+    different physical storage technology; callers such as
+    ``BaseConnector`` depend only on this abstraction.
+    """
+
+    @abstractmethod
+    def save_file(
+        self,
+        source_file: Path,
+        source_system: str,
+        source_object: str,
+        ingestion_date: date,
+    ) -> StorageResult:
+        """Land ``source_file`` unchanged and return its landing details."""
+
+
+class LocalStorageManager(StorageManager):
     """Local-disk implementation of the Raw Landing storage capability.
 
     Files are landed under::
@@ -79,7 +110,11 @@ class LocalStorageManager:
 
     Notes:
         This is the local filesystem implementation of Mercury's Raw
-        Landing storage capability. A future implementation will target Google Cloud Storage while preserving the same storage contract and expected behavior where practical. Version 1 assumes a single writer for a given destination path and does not implement distributed concurrency control (e.g. locking or lease coordination across processes).
+        Landing storage capability. A future implementation will target
+        Google Cloud Storage while preserving the same behavior and
+        public API. Version 1 assumes a single writer for a given
+        destination path and does not implement distributed concurrency
+        control (e.g. locking or lease coordination across processes).
     """
 
     def __init__(self, root_directory: Path) -> None:

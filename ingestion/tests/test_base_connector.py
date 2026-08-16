@@ -10,7 +10,7 @@ from typing import Callable
 import pytest
 
 from mercury_ingestion.common.metadata import IngestionMetadata, IngestionStatus
-from mercury_ingestion.common.storage import LocalStorageManager
+from mercury_ingestion.common.storage import LocalStorageManager, StorageManager, StorageResult
 from mercury_ingestion.connectors.base import BaseConnector, ConnectorRunResult
 
 SOURCE_SYSTEM = "olist"
@@ -257,7 +257,7 @@ class TestConstructorValidation:
                 storage_manager=LocalStorageManager(tmp_path / "landing"),
             )
 
-    def test_storage_manager_must_be_local_storage_manager(self, tmp_path: Path) -> None:
+    def test_storage_manager_must_be_a_storage_manager(self, tmp_path: Path) -> None:
         with pytest.raises(TypeError):
             _RecordingConnector(
                 source_file=_write_source_file(tmp_path),
@@ -265,6 +265,30 @@ class TestConstructorValidation:
                 source_object=SOURCE_OBJECT,
                 storage_manager=object(),  # type: ignore[arg-type]
             )
+
+    def test_accepts_any_storage_manager_subclass_not_just_local(self, tmp_path: Path) -> None:
+        # A minimal StorageManager implementation other than
+        # LocalStorageManager must be accepted too, since BaseConnector
+        # depends on the StorageManager abstraction (ADR-006), not on the
+        # local filesystem implementation specifically.
+        class _StubStorageManager(StorageManager):
+            def save_file(
+                self,
+                source_file: Path,
+                source_system: str,
+                source_object: str,
+                ingestion_date: date,
+            ) -> StorageResult:
+                return StorageResult(landing_path="raw/stub/x", checksum="abc123", file_size_bytes=1)
+
+        connector = _RecordingConnector(
+            source_file=_write_source_file(tmp_path),
+            source_system=SOURCE_SYSTEM,
+            source_object=SOURCE_OBJECT,
+            storage_manager=_StubStorageManager(),
+        )
+
+        assert isinstance(connector.storage_manager, StorageManager)
 
     def test_blank_source_system_is_rejected(self, tmp_path: Path) -> None:
         with pytest.raises(ValueError):
