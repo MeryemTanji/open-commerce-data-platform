@@ -220,5 +220,7 @@ __marimo__/
 # Datasets
 data/source/
 data/raw/
-data/batch_validation
-data/gcs_validation
+data/batch_validation/
+data/gcs_validation/
+data/simulated/
+data/incremental_validation/

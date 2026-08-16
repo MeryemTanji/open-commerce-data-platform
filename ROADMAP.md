@@ -378,7 +378,7 @@ These are intentionally out of scope for Version 1 but are potential future enha
 - [x] Post-refactor eight-source integration batch passed
 - [x] Post-refactor record counts and SHA-256 checksums remained unchanged
 
-### Day 7 — Cloud Raw Landing & Storage Abstraction
+### Day 7 - Cloud Raw Landing & Storage Abstraction
 
 - [x] Review local storage architecture before introducing cloud storage
 - [x] Document storage abstraction decision in ADR-006
@@ -400,3 +400,26 @@ These are intentionally out of scope for Version 1 but are potential future enha
 - [x] Validate 1,550,851 total source records landed across the eight-source cloud batch
 
 **Outcome:** Mercury now supports interchangeable local and Google Cloud Storage Raw Landing backends through a common storage abstraction. All eight source connectors can land immutable, byte-preserved source artifacts to GCS without cloud-specific connector logic. The cloud Raw Landing layer is validated and ready to become the source for BigQuery Raw loading.
+
+## Day 8 - Incremental Source Simulation
+
+- [x] Define initial vs incremental source-delivery strategy
+- [x] Document source-delivery design in the ingestion framework
+- [x] Add ADR-007 for historical source-delivery simulation
+- [x] Implement `OlistSourceSimulator`
+- [x] Keep source simulation upstream of connectors and storage
+- [x] Simulate one-off deliveries for customers, products, sellers, and geolocations
+- [x] Simulate daily Orders using `order_purchase_timestamp`
+- [x] Derive daily Order Items from parent Orders
+- [x] Derive daily Payments from parent Orders
+- [x] Simulate independently arriving Reviews using `review_creation_date`
+- [x] Support valid header-only zero-record daily deliveries
+- [x] Preserve source schemas, values, duplicates, and row order
+- [x] Implement immutable and failure-safe simulated deliveries
+- [x] Validate simulation-critical source fields
+- [x] Add comprehensive automated simulator tests
+- [x] Validate simulator against the real Olist dataset
+- [x] Verify daily parent-child relationships
+- [x] Validate historical replay through `LocalStorageManager`
+- [x] Validate historical replay through `GCSStorageManager`
+- [x] Confirm all 580 automated tests pass
