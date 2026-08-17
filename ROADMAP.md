@@ -103,26 +103,105 @@ Each completed milestone represents a meaningful addition to the platform.
 
 ---
 
-# Sprint 2 — BigQuery Foundation
+# Sprint 2 — Cloud Raw Platform & Historical Replay
 
-## Google Cloud
+## Google Cloud Foundation
 
 - [x] Create GCP project
 - [x] Enable required APIs
 - [x] Configure authentication
 
-## Storage
+## Cloud Storage
 
 - [x] Create Cloud Storage bucket
 - [x] Implement GCSStorageManager
-- [x] Upload raw files to Cloud Storage
+- [x] Upload Raw files to Cloud Storage
+- [x] Preserve Raw landing hierarchy
+- [x] Implement atomic create-only uploads
+- [x] Validate GCS SHA-256 integrity
+- [x] Validate duplicate protection
 
-## BigQuery
+## Source Delivery
 
-- [x] Create datasets
-- [ ] Create raw layer
-- [ ] Load raw source tables
-- [ ] Create ingestion audit table
+- [x] Define initial vs incremental source-delivery patterns
+- [x] Implement Olist source simulation
+- [x] Implement initial/reference source deliveries
+- [x] Implement daily incremental source deliveries
+- [x] Preserve valid zero-record deliveries
+- [x] Introduce SourceDelivery abstraction
+- [x] Introduce SourceDeliveryBatch abstraction
+- [x] Validate expected source membership
+
+## BigQuery Raw
+
+- [x] Create Raw dataset
+- [x] Implement explicit Raw schemas
+- [x] Implement BigQueryRawLoader
+- [x] Implement reference-table loading
+- [x] Implement transactional date-partition loading
+- [x] Preserve source-faithful Raw values
+- [x] Validate BigQuery loading with automated tests
+- [x] Validate transactional partition loading against real BigQuery
+- [x] Validate reference-table loading against real BigQuery
+
+## Historical Replay
+
+- [x] Introduce source-delivery provider abstraction
+- [x] Implement OlistSimulatedSourceProvider
+- [x] Implement HistoricalReplayRunner
+- [x] Separate initial/reference load from daily historical replay
+- [x] Validate daily expected-source membership
+- [x] Reject structurally empty source-delivery batches
+- [x] Preserve valid zero-record source deliveries
+- [x] Implement date-range historical replay
+- [x] Route transactional sources to correct BigQuery partitions
+- [x] Validate historical replay against real GCS and BigQuery
+- [x] Validate one-off reference load against real GCS and BigQuery
+
+## Replay State & Recovery
+
+### ADR-010 Phase 1 — State Foundation
+
+- [x] Define ReplayStatus
+- [x] Define ReplayStage
+- [x] Define ReplayStateRecord
+- [x] Enforce valid status/stage combinations
+- [x] Define ReplayStateStore abstraction
+- [x] Implement append-only replay event model
+- [x] Implement BigQueryReplayStateStore
+- [x] Create explicit replay-state BigQuery schema
+- [x] Partition replay metadata by delivery date
+- [x] Cluster replay metadata by source object
+- [x] Implement replay history queries
+- [x] Implement latest-state queries
+- [x] Implement date-completeness domain validation
+- [x] Keep replay metadata separate from Raw business data
+- [x] Complete Phase 1 automated regression suite — 847 tests passing
+
+### ADR-010 Phase 2 — Runner Integration
+
+- [ ] Finalise latest-attempt vs logical-completion semantics
+- [ ] Integrate ReplayStateStore with HistoricalReplayRunner
+- [ ] Introduce run_id across replay executions
+- [ ] Persist source-level ingestion state
+- [ ] Persist source-level warehouse state
+- [ ] Preserve ingestion/warehouse stage separation
+- [ ] Attempt all safe independent source work within a date
+- [ ] Support partial source availability
+- [ ] Derive date completeness from durable state
+- [ ] Stop range progression after incomplete dates
+- [ ] Validate Phase 2 against real GCP
+
+### ADR-010 Phase 3 — Targeted Recovery
+
+- [ ] Identify incomplete source deliveries
+- [ ] Distinguish failure stage
+- [ ] Avoid rerunning already-complete source work
+- [ ] Reuse immutable GCS artifacts where appropriate
+- [ ] Retry warehouse-only failures safely
+- [ ] Reconcile physical data with control-plane state
+- [ ] Re-evaluate date completeness after recovery
+- [ ] Validate recovery against real GCP
 
 ---
 
@@ -130,16 +209,10 @@ Each completed milestone represents a meaningful addition to the platform.
 
 ## Dataform
 
-### Raw Layer
+### Raw Layer Integration
 
-- [ ] Raw customers
-- [ ] Raw orders
-- [ ] Raw order items
-- [ ] Raw products
-- [ ] Raw sellers
-- [ ] Raw payments
-- [ ] Raw reviews
-- [ ] Raw geolocation
+- [ ] Declare BigQuery Raw sources in Dataform
+- [ ] Validate Raw source contracts
 
 ### Staging Layer
 
@@ -196,13 +269,13 @@ Each completed milestone represents a meaningful addition to the platform.
 
 ---
 
-# Sprint 5 — Cloud Platform
+# Sprint 5 — Production Cloud Platform
 
 ## Infrastructure
 
 - [ ] Terraform project
-- [ ] Cloud Storage
-- [ ] BigQuery
+- [ ] Manage Cloud Storage with Terraform
+- [ ] Manage BigQuery with Terraform
 - [ ] Service Accounts
 - [ ] IAM
 - [ ] Cloud Run
@@ -214,6 +287,7 @@ Each completed milestone represents a meaningful addition to the platform.
 - [ ] Scheduled ingestion
 - [ ] Cloud logging
 - [ ] Monitoring
+- [ ] Replay/recovery operational workflow
 
 ---
 
@@ -241,7 +315,7 @@ Each completed milestone represents a meaningful addition to the platform.
 ## CI/CD
 
 - [ ] GitHub Actions
-- [ ] Automated tests
+- [ ] Automated test execution
 - [ ] Code formatting
 - [ ] Linting
 - [ ] Deployment pipeline
@@ -253,6 +327,7 @@ Each completed milestone represents a meaningful addition to the platform.
 - [ ] Data dictionary
 - [ ] Developer guide
 - [ ] Operations guide
+- [ ] Replay and recovery runbook
 
 ---
 
@@ -264,7 +339,6 @@ These are intentionally out of scope for Version 1 but are potential future enha
 - [ ] Shopify connector
 - [ ] Stripe connector
 - [ ] REST API ingestion
-- [ ] Incremental loading
 - [ ] Change Data Capture
 - [ ] DuckDB local analytics
 - [ ] Machine learning feature store
@@ -276,15 +350,30 @@ These are intentionally out of scope for Version 1 but are potential future enha
 
 # Current Progress
 
-## Sprint 1
-
-### Phase 0 — Foundation
+## Sprint 1 — Foundation & Ingestion Framework
 
 ✅ Complete
 
-### Phase 1 — Local Development
+Mercury has a reusable, tested eight-source ingestion framework with shared CSV behaviour and storage-independent connectors.
 
-✅ Complete
+## Sprint 2 — Cloud Raw Platform & Historical Replay
+
+🟡 In progress
+
+Completed:
+
+- Cloud Storage Raw landing
+- BigQuery Raw loading
+- initial and incremental source simulation
+- historical replay orchestration
+- real GCS + BigQuery replay validation
+- ADR-010 Phase 1 replay-state foundation
+
+Current focus:
+
+- ADR-010 Phase 2 replay-state integration
+- logical completion semantics
+- recovery architecture
 
 ---
 
@@ -320,7 +409,7 @@ These are intentionally out of scope for Version 1 but are potential future enha
 - [x] OrdersConnector implemented
 - [x] Orders connector test suite passed
 - [x] Real Olist orders ingestion completed
-- [x] Orders raw integrity verified with SHA-256
+- [x] Orders Raw integrity verified with SHA-256
 - [x] Customers + Orders executed successfully in one batch
 
 ## Day 5
@@ -360,7 +449,7 @@ These are intentionally out of scope for Version 1 but are potential future enha
 - [x] Identified composite source keys without enforcing business uniqueness during ingestion
 - [x] Maintained the boundary between technical ingestion validation and business data quality
 - [x] Preserved source semantics in the immutable Raw layer
-- [x] Deliberately deferred CSV abstraction until enough connector implementations exist to identify stable shared behavior
+- [x] Deliberately deferred CSV abstraction until enough connector implementations existed to identify stable shared behavior
 
 ## Day 6
 
@@ -378,7 +467,7 @@ These are intentionally out of scope for Version 1 but are potential future enha
 - [x] Post-refactor eight-source integration batch passed
 - [x] Post-refactor record counts and SHA-256 checksums remained unchanged
 
-### Day 7 - Cloud Raw Landing & Storage Abstraction
+## Day 7 — Cloud Raw Landing & Storage Abstraction
 
 - [x] Review local storage architecture before introducing cloud storage
 - [x] Document storage abstraction decision in ADR-006
@@ -401,7 +490,7 @@ These are intentionally out of scope for Version 1 but are potential future enha
 
 **Outcome:** Mercury now supports interchangeable local and Google Cloud Storage Raw Landing backends through a common storage abstraction. All eight source connectors can land immutable, byte-preserved source artifacts to GCS without cloud-specific connector logic. The cloud Raw Landing layer is validated and ready to become the source for BigQuery Raw loading.
 
-## Day 8 - Incremental Source Simulation
+## Day 8 — Incremental Source Simulation
 
 - [x] Define initial vs incremental source-delivery strategy
 - [x] Document source-delivery design in the ingestion framework
@@ -423,3 +512,156 @@ These are intentionally out of scope for Version 1 but are potential future enha
 - [x] Validate historical replay through `LocalStorageManager`
 - [x] Validate historical replay through `GCSStorageManager`
 - [x] Confirm all 580 automated tests pass
+
+**Outcome:** Mercury can reproduce realistic initial and daily historical source deliveries without contaminating connector or storage responsibilities. The simulator provides deterministic source deliveries for historical replay and future orchestration testing.
+
+## Day 9 — BigQuery Raw, Historical Replay & Recovery Foundation
+
+### ADR-008 — BigQuery Raw Loading
+
+- [x] Design BigQuery Raw loading as a separate warehouse responsibility
+- [x] Implement explicit BigQuery Raw schemas
+- [x] Implement `BigQueryRawLoader`
+- [x] Define one-off/reference loading semantics
+- [x] Define date-partitioned transactional loading semantics
+- [x] Preserve source-faithful values in BigQuery Raw
+- [x] Keep BigQuery logic out of source connectors
+- [x] Add comprehensive Raw-loader automated tests
+- [x] Validate transactional loading against real BigQuery
+- [x] Validate reference-table loading against real BigQuery
+
+### ADR-009 — Historical Replay Orchestration
+
+- [x] Introduce `SourceDelivery` and `SourceDeliveryBatch`
+- [x] Introduce source-provider abstraction
+- [x] Implement `OlistSimulatedSourceProvider`
+- [x] Implement `HistoricalReplayRunner`
+- [x] Separate initial/reference loading from daily incremental replay
+- [x] Validate expected initial source membership
+- [x] Validate expected daily source membership
+- [x] Reject empty source-delivery batches
+- [x] Preserve valid zero-record deliveries
+- [x] Fail clearly on unsupported source objects
+- [x] Preserve connector-produced landing paths for warehouse handoff
+- [x] Implement chronological date-range replay
+- [x] Preserve storage and warehouse abstraction boundaries
+- [x] Complete automated replay regression suite
+- [x] Validate historical replay for 2017-05-12 through 2017-05-15 against real GCS and BigQuery
+- [x] Verify all four transactional BigQuery partitions for each replayed date
+- [x] Validate one-off initial load for customers, products, sellers, and geolocations against real GCS and BigQuery
+
+### Real Historical Replay Validation
+
+Successfully replayed:
+
+```text
+2017-05-12
+2017-05-13
+2017-05-14
+2017-05-15
+```
+
+for:
+
+```text
+orders
+order_items
+payments
+reviews
+```
+
+Verified:
+
+- [x] 4/4 sources succeeded for every replay date
+- [x] Correct BigQuery date partitions created
+- [x] GCS Raw artifacts landed under the expected ingestion dates
+- [x] Connector row counts matched warehouse load results
+- [x] Historical replay completed successfully end to end
+
+### Real Initial / Reference Load Validation
+
+Successfully loaded:
+
+```text
+customers      99,441 rows
+products       32,951 rows
+sellers         3,095 rows
+geolocations 1,000,163 rows
+```
+
+Verified:
+
+- [x] 4/4 reference sources succeeded
+- [x] GCS Raw artifacts created
+- [x] BigQuery Raw tables created and loaded
+- [x] One-off source semantics remained separate from transactional replay
+
+### ADR-010 Phase 1 — Replay State Foundation
+
+- [x] Define source-level replay state architecture
+- [x] Define `ReplayStatus`
+- [x] Define `ReplayStage`
+- [x] Implement immutable `ReplayStateRecord`
+- [x] Enforce `SUCCESS | WAREHOUSE` as the only successful terminal state
+- [x] Introduce `ReplayStateStore` backend-independent contract
+- [x] Adopt append-only replay event history
+- [x] Implement `BigQueryReplayStateStore`
+- [x] Define explicit replay-state BigQuery schema
+- [x] Keep operational metadata outside the Raw dataset
+- [x] Partition replay state by `delivery_date`
+- [x] Cluster replay state by `source_object`
+- [x] Implement replay history retrieval
+- [x] Implement latest-state retrieval
+- [x] Implement latest-per-source date retrieval
+- [x] Implement derived date-completeness helper
+- [x] Enforce single-date input for completeness evaluation
+- [x] Complete Phase 1 automated regression suite — 847 tests passing
+
+### ADR-010 Phase 2 — Design & Working Implementation
+
+- [x] Define `run_id` semantics
+- [x] Define source-level partial-success execution model
+- [x] Decide to preserve ingestion/warehouse stage separation
+- [x] Decide to attempt all safe independent source work within a date
+- [x] Separate source availability from date completeness
+- [x] Define incomplete-date range stopping semantics
+- [x] Produce initial Phase 2 implementation and automated tests
+- [ ] Revise latest-attempt vs logical-completion semantics
+- [ ] Establish stable Phase 2 implementation checkpoint
+- [ ] Validate Phase 2 against real GCP
+
+**Important checkpoint:** The initial Phase 2 implementation exposed an important recovery-state distinction before production validation:
+
+```text
+latest replay attempt state
+        ≠
+logical source completion state
+```
+
+Under Mercury's immutable historical delivery model, an earlier successful warehouse materialisation must not become logically incomplete merely because a later replay attempt fails.
+
+This semantic revision will be completed before ADR-010 Phase 2 is treated as stable.
+
+### Day 9 Outcome
+
+Mercury now has a validated end-to-end cloud Raw path:
+
+```text
+Historical Source Delivery
+        ↓
+Source Provider
+        ↓
+Historical Replay Runner
+        ↓
+Reusable Connectors
+        ↓
+Immutable GCS Raw
+        ↓
+BigQuery Raw
+```
+
+Both incremental historical replay and one-off reference loading have been validated against real Google Cloud infrastructure.
+
+The platform also has the first durable control-plane foundation for source-level replay history and future targeted recovery.
+
+The next engineering checkpoint is to finalise ADR-010 Phase 2's distinction between replay-attempt state and logical source completion before implementing automatic recovery.

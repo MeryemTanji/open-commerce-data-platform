@@ -1,10 +1,10 @@
-# ADR-009: Decouple Source Delivery from Pipeline Orchestration
+# ADR-009: Historical Replay Orchestration
 
 ## Status
 
 Accepted
 
-## Date
+## Date 
 
 2026-08-17
 
@@ -12,1091 +12,1200 @@ Accepted
 
 ## Context
 
-Mercury currently ingests the Olist e-commerce dataset as the first implementation of its source-ingestion framework.
+Mercury requires a repeatable way to simulate and execute historical ingestion over the Olist dataset without manually running individual scripts for every business date.
 
-The Olist dataset is distributed as static historical CSV files. To make this dataset behave more like operational source systems, Mercury introduced `OlistSourceSimulator`, which can:
+The project already provides the core ingestion components:
 
-- generate initial deliveries for master and reference datasets;
-- generate date-specific incremental deliveries for transactional datasets;
-- preserve source values and schemas;
-- derive related transactional deliveries from order purchase dates where appropriate;
-- represent empty daily deliveries as valid header-only CSV files.
+- source simulation;
+- source-specific connectors;
+- immutable Raw landing through `StorageManager` / `GCSStorageManager`;
+- connector-level ingestion metadata;
+- `IngestionRunner`;
+- `BigQueryRawLoader`;
+- explicit BigQuery Raw schemas.
 
-This allows Mercury to simulate realistic daily source deliveries while remaining grounded in the temporal information available in the source data.
+These components intentionally have separate responsibilities.
 
-The current simulated delivery patterns are:
+The simulator is responsible for reproducing how source data becomes available.
 
-### Initial / Master-Reference Sources
+Connectors are responsible for validating and landing individual source artifacts into Raw storage.
 
-- customers;
-- products;
-- sellers;
-- geolocations.
+The warehouse loader is responsible for loading landed Raw artifacts into BigQuery.
 
-### Daily Incremental Sources
+What was missing was an orchestration layer capable of coordinating those components across historical dates.
 
-- orders;
-- order items;
-- payments;
-- reviews.
+Without such an orchestration layer, replaying several years of incremental data would require manually:
 
-The simulator has been validated independently from the ingestion framework.
+1. generating a simulated source delivery for a date;
+2. identifying the generated files;
+3. constructing the appropriate connectors;
+4. running ingestion;
+5. locating the resulting GCS landing paths;
+6. loading those artifacts into BigQuery;
+7. repeating the process for the next date.
 
-Generated deliveries can be passed through the existing connectors, persisted through `GCSStorageManager`, and subsequently loaded into BigQuery Raw through `BigQueryRawLoader`.
+That approach is unsuitable for a reusable data platform and would make historical replay operationally fragile.
 
-This establishes the current flow:
-
-```text
-Olist Historical CSVs
-        ↓
-OlistSourceSimulator
-        ↓
-Generated Local CSV Delivery
-        ↓
-Source Connector
-        ↓
-GCSStorageManager
-        ↓
-Immutable GCS Raw Landing
-        ↓
-BigQueryRawLoader
-        ↓
-BigQuery Raw
-```
-
-However, directly coupling future pipeline orchestration to `OlistSourceSimulator` would make the orchestration layer aware of a specific dataset and a specific source-delivery mechanism.
-
-That would conflict with Mercury's broader platform objective.
-
-Mercury is intended to demonstrate a reusable data-platform architecture capable of supporting heterogeneous operational source systems.
-
-A real commerce environment may receive data through mechanisms such as:
-
-- REST APIs;
-- scheduled file deliveries;
-- SFTP;
-- cloud object storage;
-- database exports;
-- managed platform connectors;
-- other batch-oriented interfaces.
-
-The Olist CSV implementation should therefore be treated as the first source adapter rather than as the permanent source contract of Mercury.
-
----
-
-## Problem
-
-Mercury needs historical replay orchestration so that simulated daily source deliveries can be processed automatically across a date range.
-
-Without orchestration, loading historical data would require manually repeating the following process for every business date:
-
-```text
-Generate daily delivery
-        ↓
-Run source connectors
-        ↓
-Land artifacts in GCS
-        ↓
-Load GCS artifacts into BigQuery
-        ↓
-Repeat for next date
-```
-
-For several years of historical data, manual execution would be impractical and error-prone.
-
-A straightforward implementation could make a historical replay runner directly call:
-
-```python
-OlistSourceSimulator.generate_daily_load(...)
-```
-
-However, this would create an undesirable dependency:
-
-```text
-HistoricalReplayRunner
-        ↓
-OlistSourceSimulator
-```
-
-The orchestration layer would then depend directly on:
-
-- the Olist dataset;
-- local CSV files;
-- the simulation implementation;
-- the current source-delivery mechanism.
-
-Introducing a REST API or another source transport later could consequently require rewriting or significantly modifying orchestration logic.
-
-Mercury therefore needs a stable boundary between:
-
-1. obtaining a source delivery; and
-2. processing that delivery through the platform.
+Mercury therefore requires a historical replay abstraction that automates this workflow while preserving the boundaries already established by the ingestion architecture.
 
 ---
 
 ## Decision
 
-Mercury will introduce a **Source Delivery Provider abstraction** between source acquisition or simulation and pipeline orchestration.
+Mercury will provide a dedicated historical replay orchestration layer built around:
 
-Pipeline orchestration will depend on the provider contract rather than directly on `OlistSourceSimulator` or any future source transport.
+- `SourceDelivery`;
+- `SourceDeliveryBatch`;
+- `SourceDeliveryProvider`;
+- `OlistSimulatedSourceProvider`;
+- `HistoricalReplayRunner`.
 
-The architecture becomes:
+The orchestration layer coordinates existing components rather than duplicating their responsibilities.
+
+The architecture is:
 
 ```text
-Source System / Simulation
-        ↓
+Source system / simulator
+          |
+          v
 SourceDeliveryProvider
-        ↓
+          |
+          v
 SourceDeliveryBatch
-        ↓
+          |
+          v
 HistoricalReplayRunner
-        ↓
-Source Connectors
-        ↓
-GCSStorageManager
-        ↓
-BigQueryRawLoader
-        ↓
-BigQuery Raw
+          |
+          +----------------------+
+          |                      |
+          v                      v
+     Connectors             BigQueryRawLoader
+          |
+          v
+     Raw Storage
+       (GCS)
 ```
 
-The first provider implementation will wrap the existing Olist simulation framework.
-
-Future provider or connector implementations may introduce REST APIs or other source-delivery mechanisms without requiring the downstream platform architecture to be redesigned.
-
----
-
-## Source Delivery Contract
-
-Mercury will define a common representation for source deliveries.
-
-A source delivery represents an artifact made available by an upstream source for ingestion into Mercury.
-
-The initial contract will contain the information required by the current file-based ingestion framework.
-
-Conceptually:
-
-```python
-@dataclass(frozen=True, slots=True)
-class SourceDelivery:
-    source_object: str
-    path: Path
-    delivery_date: date | None
-    record_count: int
-```
-
-A collection of related source deliveries will be represented as a batch:
-
-```python
-@dataclass(frozen=True, slots=True)
-class SourceDeliveryBatch:
-    deliveries: tuple[SourceDelivery, ...]
-    delivery_date: date | None
-```
-
-The exact implementation may introduce additional validation where required, but the abstraction should remain intentionally small.
-
-The delivery contract must not contain:
-
-- GCS-specific configuration;
-- BigQuery-specific configuration;
-- warehouse schemas;
-- partition decorators;
-- transformation logic;
-- business metrics.
-
-These belong to downstream platform components.
-
----
-
-## Source Delivery Provider
-
-Mercury will define a provider interface responsible for making source deliveries available to the ingestion pipeline.
-
-Conceptually:
-
-```python
-class SourceDeliveryProvider(ABC):
-
-    @abstractmethod
-    def get_initial_delivery(self) -> SourceDeliveryBatch:
-        ...
-
-    @abstractmethod
-    def get_daily_delivery(
-        self,
-        delivery_date: date,
-    ) -> SourceDeliveryBatch:
-        ...
-```
-
-The provider answers questions such as:
-
-> What source artifacts are available for the initial load?
-
-and:
-
-> What source artifacts are available for this business date?
-
-It does not determine how those artifacts are stored in GCS or loaded into BigQuery.
-
----
-
-## Initial Provider Implementation
-
-The first implementation will be an Olist simulated source provider.
+For the current Olist implementation:
 
 ```text
-Olist Historical CSVs
-        ↓
+Olist source dataset
+        |
+        v
 OlistSourceSimulator
-        ↓
+        |
+        v
 OlistSimulatedSourceProvider
-        ↓
+        |
+        v
+HistoricalReplayRunner
+```
+
+The orchestration layer does not contain Olist simulation logic, connector validation logic, storage implementation logic, or BigQuery schema logic.
+
+It coordinates those existing components through their public contracts.
+
+---
+
+# Source Delivery Contract
+
+## SourceDelivery
+
+`SourceDelivery` represents one source artifact that has become available for ingestion.
+
+It contains only information required to describe that source delivery, including:
+
+- `source_object`;
+- source file path;
+- optional `delivery_date`;
+- `record_count`.
+
+It deliberately does not contain:
+
+- GCS configuration;
+- BigQuery configuration;
+- connector implementation details;
+- ingestion IDs;
+- warehouse destination logic.
+
+A delivery with:
+
+```text
+record_count = 0
+```
+
+is valid.
+
+A zero-record delivery represents a real source artifact containing no business rows, such as a header-only CSV.
+
+This is fundamentally different from an absent delivery.
+
+---
+
+## SourceDeliveryBatch
+
+`SourceDeliveryBatch` represents the set of source artifacts delivered together for one source-delivery boundary.
+
+For an incremental daily delivery, all contained deliveries must have the same `delivery_date` as the batch.
+
+For an initial delivery, the batch and its deliveries are undated.
+
+An empty batch is invalid.
+
+This distinction is intentional:
+
+```text
+one or more SourceDelivery objects with record_count = 0
+    -> valid delivery containing zero business rows
+
+zero SourceDelivery objects
+    -> invalid provider response
+```
+
+Without this distinction, an accidentally empty provider result could otherwise be mistaken for a successful zero-row business day.
+
+---
+
+# SourceDeliveryProvider
+
+Mercury introduces `SourceDeliveryProvider` as the abstraction between source acquisition and ingestion orchestration.
+
+The provider exposes the conceptual operations required by historical replay:
+
+```text
+get_initial_delivery()
+get_daily_delivery(delivery_date)
+```
+
+The provider is responsible only for making source deliveries available.
+
+It has no knowledge of:
+
+- GCS;
+- BigQuery;
+- warehouse schemas;
+- connector execution;
+- replay range orchestration.
+
+This boundary is intentional.
+
+The current implementation uses:
+
+```text
+OlistSimulatedSourceProvider
+```
+
+but future implementations may include providers backed by:
+
+- REST APIs;
+- SaaS APIs;
+- SFTP;
+- object storage;
+- database exports;
+- other external delivery mechanisms.
+
+A future provider can implement the same `SourceDeliveryProvider` contract without requiring the historical replay orchestration, connectors, Raw storage layer, or warehouse loader to be redesigned.
+
+---
+
+# Olist Simulation Adapter
+
+`OlistSimulatedSourceProvider` adapts the existing `OlistSourceSimulator` into the generic source-delivery contract.
+
+It does not duplicate Olist simulation behavior.
+
+The provider delegates generation to the simulator and converts the resulting simulated files into:
+
+```text
+SourceDelivery
 SourceDeliveryBatch
 ```
 
-The provider will adapt the simulator's existing result objects into the common source-delivery contract.
+objects.
 
-It will not duplicate the simulation logic.
+The simulator remains responsible for:
 
-Conceptually:
+- temporal filtering;
+- Olist-specific source rules;
+- filename mapping;
+- generation of initial deliveries;
+- generation of daily deliveries.
 
-```python
-class OlistSimulatedSourceProvider(SourceDeliveryProvider):
-
-    def get_initial_delivery(self):
-        simulation_result = self.simulator.generate_initial_load()
-        return adapt_to_source_delivery_batch(simulation_result)
-
-    def get_daily_delivery(self, delivery_date):
-        simulation_result = self.simulator.generate_daily_load(
-            delivery_date
-        )
-        return adapt_to_source_delivery_batch(simulation_result)
-```
-
-`OlistSourceSimulator` therefore remains responsible for:
-
-- filtering source records by simulation date;
-- deriving order-related incremental deliveries;
-- preserving source schemas and values;
-- producing initial and daily source artifacts;
-- validating simulation-critical fields;
-- preventing accidental overwrite of generated deliveries.
-
-The provider is responsible only for exposing those artifacts through Mercury's common source-delivery interface.
+The provider remains responsible for adapting those outputs to the orchestration contract.
 
 ---
 
-## Historical Replay Orchestration
+# Existing Simulated Deliveries
 
-Mercury will introduce a dedicated orchestration layer for historical replay.
+Historical replay may encounter source deliveries that were generated during an earlier execution.
 
-The orchestration layer will live separately from source simulation, ingestion, storage, and warehouse loading.
+The provider therefore supports already-generated delivery directories.
 
-The relevant repository structure will become:
+If the expected delivery directory already exists and contains the complete expected source set, the provider adapts those existing files rather than attempting to regenerate them.
 
-```text
-mercury_ingestion/
-├── sources/
-│   ├── __init__.py
-│   ├── base.py
-│   └── simulated_olist.py
-│
-├── simulation/
-│   ├── __init__.py
-│   └── olist.py
-│
-├── orchestration/
-│   ├── __init__.py
-│   └── replay.py
-│
-├── connectors/
-│
-├── common/
-│
-├── warehouse/
-│   ├── schemas.py
-│   └── bigquery_loader.py
-│
-└── runner.py
-```
+This preserves the simulator's create-only behavior.
 
-The existing top-level `runner.py` remains the ingestion runner responsible for executing multiple connectors.
-
-The new orchestration layer has a broader responsibility.
-
-```text
-IngestionRunner
-    → executes a collection of connectors
-
-HistoricalReplayRunner
-    → coordinates source delivery,
-      ingestion,
-      warehouse loading,
-      and historical date progression
-```
+Record counts for existing CSV files are recomputed using CSV-aware parsing so that valid CSV features such as quoted multiline values do not produce incorrect counts.
 
 ---
 
-## HistoricalReplayRunner Responsibilities
+# Partial Simulated Deliveries
 
-`HistoricalReplayRunner` will coordinate existing Mercury components rather than reimplement their behavior.
+An existing delivery directory must never silently be treated as complete when expected files are missing.
 
-It may expose operations conceptually similar to:
+If a directory exists but contains only part of the required source delivery, the provider raises an error identifying the missing source objects.
 
-```python
-run_initial_load()
-generate_range(start_date, end_date)
-run_day(delivery_date)
-run_range(start_date, end_date)
-```
+It does not:
 
-The exact public API may be refined during implementation.
+- delete the partial directory;
+- overwrite existing files;
+- regenerate the directory automatically;
+- silently return an incomplete batch.
 
-### `run_initial_load()`
+This preserves source-delivery immutability and makes partial source generation visible to the operator.
 
-Coordinates the initial master/reference load:
+---
+
+# Expected Source Membership
+
+Historical replay validates that the provider returned exactly the expected source objects before ingestion begins.
+
+The current Olist source groups are intentionally explicit.
+
+## Initial / Reference Sources
 
 ```text
-SourceDeliveryProvider
-        ↓
 customers
 products
 sellers
 geolocations
-        ↓
-Source Connectors
-        ↓
-GCSStorageManager
-        ↓
-BigQueryRawLoader
-        ↓
-Unpartitioned BigQuery Raw Tables
 ```
 
-This follows the source-delivery classification established in ADR-007.
+## Incremental / Daily Sources
 
-### `generate_range(start_date, end_date)`
+```text
+orders
+order_items
+payments
+reviews
+```
 
-Generates source deliveries for a historical range without ingesting them into the cloud platform.
+The orchestration layer owns these expectations independently of the simulator.
 
-This operation keeps source simulation independently executable.
+This prevents orchestration correctness from depending on Olist simulation internals.
 
-It is useful for:
+A future provider therefore does not need to depend on the simulator implementation.
 
-- inspecting simulated source deliveries;
-- validating historical replay behavior;
-- debugging;
-- testing;
-- preparing source artifacts before platform ingestion.
+---
 
-### `run_day(delivery_date)`
+# Batch Membership Validation
 
-Coordinates the complete transactional pipeline for one business date:
+Before connector execution, `HistoricalReplayRunner` validates the source-delivery batch.
+
+The actual `source_object` set must exactly equal the expected source set for the requested operation.
+
+The runner rejects:
+
+- missing expected sources;
+- unexpected sources;
+- incorrect source classification;
+- unsupported source objects.
+
+These failures occur before ingestion begins.
+
+This prevents a malformed provider response from creating a partially valid Raw ingestion without the orchestration layer first recognizing that the delivery itself was incorrect.
+
+---
+
+# Connector Mapping
+
+Historical replay uses an explicit mapping between source objects and existing connector classes.
+
+Conceptually:
+
+```text
+customers      -> CustomerConnector
+products       -> ProductConnector
+sellers        -> SellerConnector
+geolocations   -> GeolocationConnector
+
+orders         -> OrderConnector
+order_items    -> OrderItemConnector
+payments       -> PaymentConnector
+reviews        -> ReviewConnector
+```
+
+The implementation uses the actual connector class names defined by the repository.
+
+The replay layer does not reimplement connector logic.
+
+Each connector remains responsible for its existing validation, metadata generation, and Raw landing behavior.
+
+An unsupported source object fails explicitly rather than surfacing an accidental dictionary `KeyError`.
+
+---
+
+# HistoricalReplayRunner
+
+`HistoricalReplayRunner` is the orchestration component responsible for coordinating:
+
+```text
+source delivery
+    ->
+connector execution
+    ->
+Raw landing
+    ->
+warehouse loading
+```
+
+It does not itself implement:
+
+- source simulation;
+- source-specific validation;
+- file persistence;
+- GCS behavior;
+- BigQuery schema definitions.
+
+Its responsibility is sequencing and coordination.
+
+---
+
+# Initial Load
+
+The initial/reference load is executed through:
+
+```text
+run_initial_load(ingestion_date)
+```
+
+The provider supplies the expected initial source objects:
+
+```text
+customers
+products
+sellers
+geolocations
+```
+
+An explicit `ingestion_date` is still required even though these BigQuery Raw tables are not ingestion-date partitioned.
+
+The date is required by the ingestion infrastructure and metadata conventions and must not be silently manufactured inside the runner.
+
+Initial BigQuery destinations remain unpartitioned.
+
+Conceptually:
+
+```text
+raw.customers
+raw.products
+raw.sellers
+raw.geolocations
+```
+
+rather than:
+
+```text
+raw.customers$YYYYMMDD
+```
+
+---
+
+# Daily Incremental Replay
+
+A single historical business date is executed through:
+
+```text
+run_day(delivery_date)
+```
+
+The provider supplies:
+
+```text
+orders
+order_items
+payments
+reviews
+```
+
+for that delivery date.
+
+The same business date is propagated through the ingestion and warehouse layers.
+
+The resulting Raw landing paths use the ingestion-date convention:
+
+```text
+.../ingestion_date=YYYY-MM-DD/...
+```
+
+and the corresponding BigQuery Raw transactional tables use ingestion-time/date partition destinations equivalent to:
+
+```text
+raw.orders$YYYYMMDD
+raw.order_items$YYYYMMDD
+raw.payments$YYYYMMDD
+raw.reviews$YYYYMMDD
+```
+
+The orchestration layer does not reconstruct the GCS landing path.
+
+It uses the landing path produced by connector ingestion metadata and passes that path directly to the warehouse loader.
+
+This preserves the connector/storage layer as the authority over Raw object location.
+
+---
+
+# Range Replay
+
+Historical ranges are executed through:
+
+```text
+run_range(start_date, end_date)
+```
+
+The range is inclusive.
+
+For example:
+
+```text
+start_date = 2017-05-12
+end_date   = 2017-05-15
+```
+
+processes:
+
+```text
+2017-05-12
+2017-05-13
+2017-05-14
+2017-05-15
+```
+
+The runner validates:
+
+```text
+start_date <= end_date
+```
+
+before execution.
+
+Date iteration is performed sequentially.
+
+Historical replay is intentionally deterministic and does not introduce parallel date execution.
+
+---
+
+# Raw-Layer Immutability
+
+Historical replay does not implement an overwrite mode.
+
+There is no:
+
+```text
+force=True
+overwrite=True
+replace=True
+```
+
+behavior.
+
+Raw landing immutability remains the responsibility of the storage layer.
+
+If an existing immutable destination prevents a connector from landing the same source again, the existing connector/storage failure path is allowed to surface through orchestration.
+
+HistoricalReplayRunner does not bypass or weaken this behavior.
+
+This prevents historical replay from accidentally overwriting previously landed Raw artifacts.
+
+---
+
+# BigQuery Loading
+
+The replay runner uses the existing `BigQueryRawLoader`.
+
+It does not:
+
+- duplicate warehouse schemas;
+- infer schemas;
+- reconstruct GCS paths;
+- implement BigQuery client behavior;
+- modify BigQuery overwrite semantics.
+
+For each warehouse-eligible source, the loader receives the actual:
+
+```text
+source_object
+landing_path
+ingestion_date
+```
+
+produced by the upstream ingestion path.
+
+This preserves clean ownership between orchestration and warehouse loading.
+
+---
+
+# Failure Semantics Established by ADR-009
+
+The initial implementation of ADR-009 established conservative fail-fast orchestration.
+
+Its primary purpose was to prove that Mercury could reliably execute:
+
+```text
+simulate
+    ->
+source delivery
+    ->
+connector ingestion
+    ->
+immutable GCS Raw landing
+    ->
+BigQuery Raw loading
+```
+
+over historical ranges.
+
+At that stage, automatic recovery was deliberately out of scope.
+
+The implementation therefore prioritized:
+
+- deterministic sequencing;
+- explicit failures;
+- no automatic retry;
+- no overwrite;
+- no silent continuation after an incomplete replay date.
+
+This provided a safe baseline from which operational recovery behavior could later be designed using observed real failure boundaries rather than assumptions.
+
+---
+
+# Subsequent Evolution: Source-Level Partial Success
+
+ADR-010 extends the execution semantics established by ADR-009.
+
+The daily delivery remains the date-level orchestration and completeness boundary, but the individual source objects are independent ingestion units.
+
+A failure in one independent source should not make valid data from unrelated successful sources unavailable.
+
+Mercury therefore evolves the daily replay model to distinguish:
+
+```text
+SOURCE AVAILABILITY
+```
+
+from:
+
+```text
+DATE COMPLETENESS
+```
+
+These concepts are intentionally not equivalent.
+
+---
+
+# Revised Daily Execution Model
+
+For a daily replay, Mercury follows two ordered execution phases.
+
+```text
+SourceDeliveryBatch
+        |
+        v
+validate complete expected membership
+        |
+        v
++--------------------------+
+|     INGESTION PHASE      |
+|                          |
+| attempt all expected     |
+| independent sources      |
++------------+-------------+
+             |
+             v
+      collect individual
+      connector outcomes
+             |
+             v
++--------------------------+
+|      WAREHOUSE PHASE     |
+|                          |
+| load every source whose  |
+| ingestion succeeded      |
++------------+-------------+
+             |
+             v
+   derive date completeness
+```
+
+Mercury completes the ingestion-attempt phase before beginning the warehouse phase.
+
+However, warehouse loading is not globally blocked merely because one independent source failed ingestion.
+
+Instead, each successfully ingested source remains eligible for warehouse loading.
+
+---
+
+# Attempt-All-Safe-Work Within a Date
+
+Within one business date, Mercury should attempt all safe independent work.
+
+Suppose ingestion produces:
+
+```text
+orders       -> succeeded
+order_items  -> succeeded
+payments     -> failed
+reviews      -> succeeded
+```
+
+Mercury should not stop after the `payments` failure and leave `reviews` unattempted merely because of connector ordering.
+
+Instead, the warehouse phase becomes:
+
+```text
+orders       -> BigQuery load attempted
+order_items  -> BigQuery load attempted
+payments     -> BigQuery load not attempted
+reviews      -> BigQuery load attempted
+```
+
+If all eligible warehouse loads succeed, the resulting Raw availability is:
+
+```text
+orders       -> available
+order_items  -> available
+payments     -> unavailable
+reviews      -> available
+```
+
+The business date remains:
+
+```text
+INCOMPLETE
+```
+
+because not every expected source completed its required path.
+
+This behavior maximizes safe source availability while preserving truthful completeness information.
+
+---
+
+# Warehouse Partial Failure
+
+The same principle applies during warehouse loading.
+
+If all sources successfully land in GCS but one BigQuery load fails:
+
+```text
+orders       -> BigQuery succeeded
+order_items  -> BigQuery succeeded
+payments     -> BigQuery failed
+reviews      -> BigQuery succeeded
+```
+
+Mercury should retain the successful loads.
+
+It must not:
+
+- delete successfully loaded BigQuery data;
+- delete immutable GCS artifacts;
+- roll back unrelated successful sources;
+- pretend the date is complete.
+
+The date remains incomplete until the failed source is successfully recovered.
+
+---
+
+# Source Availability vs Date Completeness
+
+The design explicitly follows:
+
+```text
+source availability != date completeness
+```
+
+This is important in a production data platform because downstream products may depend on different source combinations.
+
+For example:
+
+```text
+orders dashboard
+    -> may depend only on orders
+
+review analytics
+    -> may depend only on reviews
+
+revenue reconciliation
+    -> may require orders + payments
+```
+
+A temporary failure in a payment platform should not automatically prevent an unrelated orders or reviews product from receiving otherwise valid data.
+
+Mercury therefore makes successfully processed independent source data available while separately exposing whether the complete expected daily delivery has been achieved.
+
+Mercury does not attempt to determine downstream dependency requirements at the historical replay layer.
+
+---
+
+# Range-Level Boundary
+
+Although Mercury attempts all safe work within the current date, historical range execution remains conservative across dates.
+
+The intended behavior is:
+
+```text
+process date
+    |
+    v
+attempt all source ingestions
+    |
+    v
+warehouse all eligible sources
+    |
+    v
+derive completeness
+    |
+    +---- COMPLETE ----> continue to next date
+    |
+    +---- INCOMPLETE --> stop range
+```
+
+For example:
+
+```text
+2017-05-12  COMPLETE
+2017-05-13  COMPLETE
+2017-05-14  INCOMPLETE
+2017-05-15  NOT ATTEMPTED
+```
+
+This prevents a known historical completeness gap from being silently propagated through the remainder of a replay while still maximizing safe data availability for the incomplete date.
+
+Persistent source-level state and targeted recovery for such an incomplete date are defined by ADR-010.
+
+---
+
+# Recovery Is Not an ADR-009 Responsibility
+
+ADR-009 establishes historical replay orchestration.
+
+It does not itself define automatic recovery.
+
+In particular, ADR-009 does not implement:
+
+- automatic retry;
+- resume from checkpoint;
+- skipping previously successful sources;
+- targeted BigQuery-only retry;
+- state-aware reuse of existing GCS artifacts;
+- automatic reconciliation;
+- retry policies;
+- backoff.
+
+Those behaviors require reliable knowledge of what previously happened.
+
+ADR-010 therefore introduces persistent source-level replay state before automatic recovery behavior is added.
+
+This follows the design principle:
+
+> Observe and persist execution state before automating recovery from that state.
+
+---
+
+# REST API Boundary
+
+ADR-009 does not implement a REST API.
+
+This is intentional.
+
+The current Olist simulation is adapted behind:
 
 ```text
 SourceDeliveryProvider
-        ↓
-Daily SourceDeliveryBatch
-        ↓
-Orders Connector
-Order Items Connector
-Payments Connector
-Reviews Connector
-        ↓
-IngestionRunner
-        ↓
-GCSStorageManager
-        ↓
-Successful GCS Landing Metadata
-        ↓
-BigQueryRawLoader
-        ↓
-Corresponding BigQuery Raw Partitions
 ```
 
-A single business date is the natural unit of execution and recovery.
+which provides the architectural seam for future source implementations.
 
-### `run_range(start_date, end_date)`
-
-Automates historical replay by repeatedly executing the single-day workflow:
-
-```text
-Day 1
-    obtain source delivery
-    ingest
-    warehouse load
-    verify execution outcome
-
-Day 2
-    obtain source delivery
-    ingest
-    warehouse load
-    verify execution outcome
-
-Day 3
-    ...
-
-until end_date
-```
-
-Conceptually:
-
-```python
-for delivery_date in requested_date_range:
-    run_day(delivery_date)
-```
-
-This eliminates the need to manually execute hundreds of daily ingestion and warehouse-loading commands.
-
----
-
-## Independent Execution of Pipeline Stages
-
-Although `HistoricalReplayRunner` can coordinate the complete pipeline, the underlying stages must remain independently executable.
-
-The following operations must continue to work without the historical replay runner.
-
-### Source Simulation Only
-
-```text
-OlistSourceSimulator
-        ↓
-Local Simulated Delivery
-```
-
-This allows source simulation to be developed, tested, and inspected independently.
-
-### Ingestion Only
-
-```text
-Existing Local Delivery
-        ↓
-Connector
-        ↓
-GCSStorageManager
-```
-
-This allows the ingestion framework to operate against already-existing source deliveries.
-
-### Warehouse Loading Only
-
-```text
-Existing GCS Artifact
-        ↓
-BigQueryRawLoader
-        ↓
-BigQuery Raw
-```
-
-This allows BigQuery Raw to be reconstructed or individual loads to be replayed directly from immutable GCS artifacts.
-
-The orchestration layer is therefore a convenience and automation layer, not a replacement for the existing components.
-
-This separation improves:
-
-- testing;
-- debugging;
-- replayability;
-- recovery;
-- component reuse;
-- future orchestration options.
-
----
-
-## Component Responsibility Boundaries
-
-Mercury will preserve clear responsibility boundaries between components.
-
-### Source Provider
-
-Responsible for:
-
-- obtaining or preparing source deliveries;
-- exposing those deliveries through a common contract.
-
-Not responsible for:
-
-- GCS persistence;
-- BigQuery loading;
-- warehouse schemas;
-- transformations.
-
-### Source Connector
-
-Responsible for:
-
-- source-specific structural validation;
-- ingestion metadata generation;
-- invoking the configured storage implementation;
-- reporting ingestion success or failure.
-
-Not responsible for:
-
-- historical replay;
-- BigQuery loading;
-- source simulation;
-- business transformations.
-
-### GCSStorageManager
-
-Responsible for:
-
-- immutable physical persistence of Raw source artifacts in Google Cloud Storage;
-- deterministic Raw landing paths;
-- checksum and storage result behavior.
-
-Not responsible for:
-
-- source generation;
-- warehouse loading;
-- BigQuery schemas;
-- transformations.
-
-### BigQueryRawLoader
-
-Responsible for:
-
-- loading already-landed GCS artifacts into BigQuery Raw;
-- explicit Raw schemas;
-- master/reference table loading;
-- transactional partition routing;
-- partition-scoped idempotent replay behavior.
-
-Not responsible for:
-
-- obtaining source data;
-- creating simulated source deliveries;
-- uploading source artifacts to GCS;
-- historical date iteration.
-
-### HistoricalReplayRunner
-
-Responsible for:
-
-- coordinating components in the correct execution order;
-- iterating through historical business dates;
-- passing outputs from one stage into the next;
-- reporting execution outcomes;
-- stopping replay when a required stage cannot complete correctly.
-
-Not responsible for:
-
-- CSV filtering;
-- source-specific extraction logic;
-- GCS upload implementation;
-- BigQuery schema definitions;
-- partition decorator construction;
-- business transformations.
-
----
-
-## Data Handoff Between Components
-
-Components should exchange result objects rather than reconstruct information already produced upstream.
-
-For example, after successful ingestion:
-
-```text
-Connector
-        ↓
-IngestionMetadata
-        ↓
-landing_path
-        ↓
-HistoricalReplayRunner
-        ↓
-BigQueryRawLoader
-```
-
-The orchestration layer should use the GCS landing path returned by ingestion metadata rather than reconstructing the expected GCS URI independently.
-
-Conceptually:
-
-```python
-bigquery_loader.load(
-    source_object=connector_result.metadata.source_object,
-    gcs_uri=connector_result.metadata.landing_path,
-    ingestion_date=delivery_date,
-)
-```
-
-This reduces duplicated path logic and preserves ownership boundaries between components.
-
----
-
-## Failure and Replay Model
-
-Historical replay must be deterministic and observable.
-
-For the initial implementation, a business date will be treated as a logical replay unit.
-
-If all required stages for a date complete successfully:
-
-```text
-Day N
-    source delivery    SUCCESS
-    GCS ingestion      SUCCESS
-    BigQuery loading   SUCCESS
-
-→ continue to Day N + 1
-```
-
-If a required stage fails:
-
-```text
-Day N
-    source delivery    SUCCESS
-    GCS ingestion      SUCCESS
-    BigQuery loading   FAILED
-
-→ stop replay
-→ report failing date and source
-→ do not silently continue
-```
-
-This avoids creating a historical warehouse whose completeness boundary is unclear.
-
-More sophisticated recovery strategies such as:
-
-- configurable retries;
-- partial-source continuation;
-- checkpoints;
-- resume modes;
-- automated backfills;
-
-may be introduced later when justified.
-
----
-
-## Immutability and Existing Deliveries
-
-The historical replay runner must respect the immutability guarantees already established by Mercury.
-
-It must not silently delete or overwrite existing simulated source deliveries or GCS Raw artifacts in order to make a replay succeed.
-
-Existing immutable destinations should surface through explicit behavior rather than destructive cleanup.
-
-Replay and resume semantics will be introduced deliberately rather than by weakening the storage guarantees of the underlying components.
-
-BigQuery Raw remains independently replayable from immutable GCS artifacts according to the idempotent loading strategy defined in ADR-008.
-
-This distinction is important:
-
-```text
-GCS Raw Landing
-    → immutable source artifact
-
-BigQuery Raw
-    → replayable query representation
-```
-
-If a BigQuery Raw table or partition needs to be reconstructed, the immutable GCS artifact remains the recovery source.
-
----
-
-## REST API Extensibility
-
-Mercury is intentionally being designed so that source acquisition is not permanently coupled to local CSV simulation.
-
-The future architecture may support multiple source mechanisms:
-
-```text
-                         Source Delivery
-                               │
-              ┌────────────────┴────────────────┐
-              │                                 │
-              ▼                                 ▼
-     Olist Simulation                     REST API
-              │                                 │
-              ▼                                 ▼
-OlistSimulatedSourceProvider          REST/API Adapter
-              │                                 │
-              └────────────────┬────────────────┘
-                               ▼
-                    Pipeline Orchestration
-                               ▼
-                         Raw Landing
-                               ▼
-                          BigQuery
-```
-
-The exact API architecture is intentionally deferred.
-
-Possible future capabilities include:
-
-- HTTP source requests;
-- JSON responses;
-- pagination;
-- authentication;
-- retries;
-- request timeouts;
-- rate-limit handling;
-- API-specific connectors;
-- transient-error handling;
-- incremental cursor or watermark strategies.
-
-These concerns should be introduced as source-specific capabilities rather than embedded in the historical replay runner.
-
----
-
-## Why the REST API Is Not Implemented in This Decision
-
-REST API ingestion is considered an important future capability for Mercury.
-
-However, implementing an HTTP service at this stage would introduce additional concerns including:
-
-- API server lifecycle;
-- endpoint design;
-- request and response contracts;
-- JSON serialization;
-- pagination;
-- retries;
-- timeouts;
-- authentication;
-- HTTP status handling;
-- rate limiting;
-- API client implementation and testing.
-
-These concerns are valuable when Mercury specifically begins demonstrating API-based ingestion, but they are not required to validate the current core platform path:
-
-```text
-Source Delivery
-        ↓
-Ingestion
-        ↓
-Immutable Raw Storage
-        ↓
-Queryable Raw Warehouse
-        ↓
-Transformation
-```
-
-Mercury will therefore **design for REST extensibility now without implementing the REST transport yet**.
-
-This avoids unnecessary complexity while preventing the current CSV implementation from becoming an architectural constraint.
-
----
-
-## Future REST/API Integration
-
-When API ingestion is introduced, Mercury should not require a redesign of:
-
-- `GCSStorageManager`;
-- `BigQueryRawLoader`;
-- BigQuery Raw schemas;
-- Dataform staging;
-- historical warehouse structure;
-- pipeline orchestration.
-
-Depending on the API response format and ingestion requirements, the future implementation may introduce:
+A future:
 
 ```text
 RestApiSourceProvider
 ```
 
-and/or API-specific connectors such as:
+can implement the same delivery contract:
 
 ```text
-OrdersApiConnector
-PaymentsApiConnector
+get_initial_delivery()
+get_daily_delivery(...)
 ```
 
-rather than forcing JSON responses through the existing CSV connectors.
+while leaving downstream orchestration largely independent of how the source artifact was acquired.
 
-For example:
+This allows Mercury to first prove reliable ingestion and replay semantics using deterministic local simulation without coupling the architecture to HTTP concerns such as:
 
-```text
-CSV Source
-    ↓
-CSV Connector
-    ┐
-    │
-    ├────────→ Common Raw Landing Boundary
-    │                    ↓
-    │                   GCS
-    │                    ↓
-    │                 BigQuery
-    │
-REST API
-    ↓
-API Connector
-    ┘
-```
+- authentication;
+- pagination;
+- rate limiting;
+- API retries;
+- network failures;
+- request throttling.
 
-This allows different source transports to converge on the same downstream platform architecture.
-
-The future API implementation should therefore extend Mercury rather than replace the existing ingestion framework.
+The architecture is therefore API-ready without requiring a REST API to be implemented as part of ADR-009.
 
 ---
 
-## Architectural Goal
+# Alternatives Considered
 
-The long-term objective is not to demonstrate that Mercury can process Olist CSV files.
+## Manual Historical Replay
 
-The objective is to demonstrate that Mercury provides a reusable ingestion and analytics platform in which source acquisition can evolve independently from downstream storage, warehouse, transformation, and data-product layers.
+Manually run simulation, ingestion, and BigQuery loading for every date.
 
-The desired architectural property is:
+Rejected because:
+
+- it does not scale to multi-year history;
+- it is error-prone;
+- it is difficult to reproduce;
+- it does not demonstrate production-style orchestration;
+- it would require repeated operator intervention.
+
+---
+
+## Put Historical Replay Logic in the Simulator
+
+Allow `OlistSourceSimulator` to loop over all dates and invoke ingestion.
+
+Rejected because simulation and orchestration are separate responsibilities.
+
+The simulator should model source availability, not control GCS or BigQuery execution.
+
+---
+
+## Put Historical Replay Logic in IngestionRunner
+
+Extend the generic ingestion runner to understand:
+
+- historical date ranges;
+- source providers;
+- simulation;
+- BigQuery loading.
+
+Rejected because this would make a generic connector runner responsible for source acquisition and warehouse orchestration.
+
+`IngestionRunner` should remain focused on connector execution.
+
+---
+
+## Couple Historical Replay Directly to OlistSourceSimulator
+
+Have `HistoricalReplayRunner` call the simulator directly.
+
+Rejected because this would couple orchestration to the simulated Olist implementation and make future source providers harder to introduce.
+
+`SourceDeliveryProvider` provides the required abstraction.
+
+---
+
+## Build the REST API First
+
+Implement an HTTP API around the simulator before building replay orchestration.
+
+Rejected for this phase.
+
+The initial objective is to prove the end-to-end ingestion architecture and its operational contracts.
+
+Introducing HTTP behavior before those contracts are stable would add authentication, transport, pagination, retry, and networking concerns without improving the underlying ingestion design.
+
+The provider abstraction allows the API boundary to be added later without redesigning the downstream pipeline.
+
+---
+
+## Require All Sources to Succeed Before Any Warehouse Loading
+
+Treat the daily source set as an all-or-nothing warehouse gate.
+
+This was useful as an initial conservative implementation while ADR-009 was being proven.
+
+It is not the preferred long-term production behavior.
+
+Rejected as the final operational model because independent downstream products should not lose access to valid source data merely because another unrelated source failed.
+
+ADR-010 therefore evolves the execution model toward partial source availability with explicit date-level completeness.
+
+---
+
+## End-to-End Source-by-Source Interleaving
+
+Execute:
 
 ```text
-Change Source Transport
-        ↓
-Do Not Redesign the Platform
+orders
+    -> GCS
+    -> BigQuery
+
+order_items
+    -> GCS
+    -> BigQuery
+
+payments
+    -> GCS
+    -> BigQuery
+
+reviews
+    -> GCS
+    -> BigQuery
 ```
 
-For example:
+Rejected as the preferred orchestration model.
+
+Mercury instead preserves clean stage separation:
 
 ```text
-CSV
-REST API
-SFTP
-Database Export
-Cloud Object Storage
-        ↓
-Source-Specific Acquisition / Adapter
-        ↓
-Mercury Raw Landing Contract
-        ↓
-GCS
-        ↓
+attempt all ingestion
+        ->
+collect connector outcomes
+        ->
+warehouse eligible sources
+```
+
+This makes operational boundaries easier to understand and debug while still allowing successful independent sources to become available.
+
+---
+
+# Consequences
+
+## Positive
+
+Historical replay becomes automated and repeatable.
+
+The architecture remains modular:
+
+```text
+source acquisition
+simulation
+connector execution
+storage
+warehouse loading
+orchestration
+```
+
+remain separate concerns.
+
+The provider abstraction allows future source implementations without redesigning the replay runner.
+
+Historical ranges can be replayed without manually invoking each date.
+
+The same existing connector, storage, and warehouse components are reused.
+
+Raw-layer immutability remains enforced.
+
+BigQuery loading uses actual connector-produced landing paths rather than reconstructed paths.
+
+Initial/reference and daily/incremental delivery semantics remain explicit.
+
+The architecture supports future REST/API-backed source acquisition.
+
+The evolved partial-success model maximizes safe source availability.
+
+Source-level failures do not unnecessarily block unrelated independent data.
+
+Date-level completeness remains explicit rather than being inferred from the mere presence of some data.
+
+The architecture provides a clean foundation for source-level operational state and targeted recovery.
+
+---
+
+## Negative
+
+Historical replay introduces another orchestration abstraction that must be maintained.
+
+A date may intentionally become partially available in BigQuery.
+
+Consumers that require complete daily inputs must therefore use completeness information rather than assuming that the presence of one partition implies that every expected source is available.
+
+Recovery becomes a separate concern requiring persistent operational state.
+
+The orchestration layer must carefully distinguish:
+
+- source failure;
+- source availability;
+- warehouse eligibility;
+- date completeness;
+- range continuation.
+
+---
+
+## Risks
+
+A malformed provider response could otherwise result in incorrect replay behavior.
+
+Mitigation:
+
+- strict batch membership validation;
+- non-empty batch invariant;
+- explicit source expectations.
+
+Repeated replay could overwrite historical Raw data.
+
+Mitigation:
+
+- immutable storage behavior;
+- no force/overwrite mode.
+
+A source failure could be mistaken for complete daily ingestion.
+
+Mitigation:
+
+- source-level outcomes;
+- explicit expected-source membership;
+- derived date completeness under ADR-010.
+
+Partial availability could be mistaken by downstream consumers for full daily completeness.
+
+Mitigation:
+
+- persistent replay-state metadata under ADR-010;
+- explicit separation of availability and completeness;
+- downstream dependency-aware consumption patterns in later platform layers.
+
+Orchestration could become tightly coupled to the Olist simulator.
+
+Mitigation:
+
+- `SourceDeliveryProvider` abstraction;
+- explicit orchestration-owned source expectations;
+- no simulator dependency in generic source-delivery contracts.
+
+---
+
+# Validation
+
+ADR-009 was validated through automated tests covering:
+
+- source-delivery construction;
+- zero-record deliveries;
+- invalid empty batches;
+- daily delivery-date consistency;
+- simulated Olist provider adaptation;
+- existing simulated deliveries;
+- partial existing delivery rejection;
+- connector mapping;
+- source membership validation;
+- unsupported source handling;
+- ingestion ordering;
+- warehouse ordering;
+- landing-path handoff;
+- initial-load orchestration;
+- daily orchestration;
+- range orchestration;
+- failure-stop semantics;
+- Raw destination immutability;
+- initial unpartitioned destinations;
+- daily BigQuery partition destinations.
+
+The historical replay path was also exercised against the real Mercury development GCP environment.
+
+A multi-day incremental replay successfully processed:
+
+```text
+2017-05-12
+2017-05-13
+2017-05-14
+2017-05-15
+```
+
+for:
+
+```text
+orders
+order_items
+payments
+reviews
+```
+
+through:
+
+```text
+simulation
+    ->
+source delivery
+    ->
+connector ingestion
+    ->
+GCS Raw
+    ->
 BigQuery Raw
-        ↓
-Dataform
-        ↓
-Core / Features / Data Products
 ```
 
-Source independence is therefore a deliberate architectural property of Mercury rather than a future implementation detail.
+and the expected BigQuery partitions were verified.
 
----
-
-## Consequences
-
-### Positive
-
-#### Source Transport Is Decoupled from Orchestration
-
-The historical replay runner does not need to know whether a delivery originated from Olist simulation, an API, or another future source.
-
-#### Current CSV Work Remains Useful
-
-The existing simulator and connectors become the first implementation of a broader source architecture rather than temporary code that must later be discarded.
-
-#### REST Ingestion Can Be Introduced Incrementally
-
-Mercury can add API-specific capabilities later without rewriting the GCS or BigQuery layers.
-
-#### Historical Replay Becomes Automated
-
-Several years of transactional source history can be replayed without manually executing ingestion and warehouse-loading commands for every date.
-
-#### Pipeline Stages Remain Independently Testable
-
-Simulation, ingestion, storage, and warehouse loading can still be executed and validated separately.
-
-#### Failure Recovery Remains Understandable
-
-A single business date provides a clear execution and recovery boundary for historical replay.
-
-#### BigQuery Can Be Reconstructed from GCS
-
-Because immutable GCS artifacts remain independent from their BigQuery representation, warehouse data can be replayed without reacquiring the original source.
-
-#### Portfolio Architecture Becomes More Representative
-
-Mercury demonstrates architectural separation between source acquisition, ingestion, storage, warehouse loading, and orchestration rather than presenting a dataset-specific ETL script.
-
----
-
-### Negative
-
-#### Additional Abstraction
-
-The source-provider interface introduces another layer between simulation and ingestion.
-
-For the current Olist implementation, direct calls to `OlistSourceSimulator` would be simpler.
-
-This additional abstraction is accepted because Mercury explicitly intends to support multiple source-delivery mechanisms.
-
-#### More Result Objects and Adapters
-
-Simulation results must be adapted into the common source-delivery contract.
-
-#### REST Support Is Not Immediate
-
-This decision creates the architectural extension point but does not itself demonstrate HTTP ingestion.
-
-A later implementation will still be required to prove REST/API ingestion.
-
-#### Replay and Resume Behavior Requires Careful Design
-
-Immutable source artifacts mean historical replay cannot simply overwrite existing deliveries when rerun.
-
-Explicit resume or recovery semantics may therefore be required later.
-
----
-
-## Alternatives Considered
-
-### Alternative 1 — Couple HistoricalReplayRunner Directly to OlistSourceSimulator
+The initial/reference path was separately exercised successfully for:
 
 ```text
-HistoricalReplayRunner
-        ↓
-OlistSourceSimulator
+customers
+products
+sellers
+geolocations
 ```
 
-Rejected because this makes orchestration Olist-specific and couples the pipeline to the current simulation mechanism.
+through the same ingestion architecture into their unpartitioned BigQuery Raw tables.
+
+These integration exercises validated the architecture before persistent recovery semantics were introduced.
 
 ---
 
-### Alternative 2 — Build the REST API Immediately
+# Relationship to Other ADRs
+
+ADR-009 establishes the historical replay orchestration architecture.
+
+ADR-010 builds on ADR-009 by introducing:
+
+- persistent source-level replay state;
+- append-only execution history;
+- replay execution identity;
+- source-level status and stage tracking;
+- derived date completeness;
+- the operational foundation for targeted recovery.
+
+ADR-010 may evolve execution semantics where necessary for production recovery and availability requirements, but it does not invalidate the architectural boundaries established by ADR-009.
+
+In particular, the following ADR-009 decisions remain foundational:
 
 ```text
-Olist Data
-    ↓
-Fake REST API
-    ↓
-API Client
-    ↓
-Mercury
+SourceDeliveryProvider abstraction
+SourceDelivery / SourceDeliveryBatch contracts
+explicit expected-source membership
+existing connector reuse
+immutable Raw landing
+connector-produced landing-path handoff
+BigQueryRawLoader reuse
+separate initial and daily replay paths
+sequential historical date orchestration
 ```
-
-Deferred rather than permanently rejected.
-
-API ingestion is valuable, but implementing HTTP transport now would add significant scope before the core platform and orchestration layers are complete.
-
-The provider abstraction preserves a clean path to implementing this later.
 
 ---
 
-### Alternative 3 — Keep Standalone Manual Scripts
+# Final Decision
 
-Rejected because manually replaying several years of daily transactional deliveries would be repetitive, error-prone, difficult to resume, and unsuitable for demonstrating production-oriented orchestration.
+Mercury will use `HistoricalReplayRunner` as the orchestration layer for historical source replay.
 
----
+Historical replay will remain independent from source simulation, connector implementation, storage implementation, and warehouse implementation.
 
-### Alternative 4 — Put Orchestration Inside the Warehouse Package
+Source acquisition will be abstracted through `SourceDeliveryProvider`, allowing the current deterministic Olist simulation to be replaced or supplemented by production-style source providers in the future.
 
-Rejected because historical replay coordinates source acquisition, ingestion, storage, and warehouse loading.
+A daily replay represents one completeness boundary containing multiple independent source deliveries.
 
-It is therefore a pipeline-level concern rather than a BigQuery-specific concern.
+Mercury will attempt all safe work for the current date and make successfully processed independent source data available rather than withholding it because another source failed.
 
-`warehouse/` will remain focused on BigQuery Raw loading behavior.
+Overall date completeness remains a separate derived concept.
 
----
+An incomplete historical date stops automatic progression to later dates after all safe work for the current date has been attempted.
 
-### Alternative 5 — Build One Monolithic Pipeline Runner
+Persistent execution state, run identity, and targeted recovery are defined by ADR-010 rather than embedded directly into ADR-009.
 
-A single component could implement simulation, CSV filtering, GCS upload, BigQuery loading, and historical iteration.
+This preserves the core principle:
 
-Rejected because it would duplicate responsibilities already owned by specialized components and create tight coupling between layers.
+> Historical replay coordinates existing ingestion components; it does not replace their responsibilities.
 
-The orchestration layer will coordinate components rather than absorb their implementation logic.
+And, as the architecture evolves toward recovery:
 
----
-
-## Implementation Direction
-
-The first implementation following this ADR will introduce:
-
-```text
-mercury_ingestion/
-├── sources/
-│   ├── __init__.py
-│   ├── base.py
-│   └── simulated_olist.py
-│
-└── orchestration/
-    ├── __init__.py
-    └── replay.py
-```
-
-### Phase 1 — Source Abstraction
-
-Implement:
-
-- `SourceDelivery`;
-- `SourceDeliveryBatch`;
-- `SourceDeliveryProvider`;
-- `OlistSimulatedSourceProvider`.
-
-Validate that the provider can expose both initial and daily simulator outputs without changing `OlistSourceSimulator`.
-
-### Phase 2 — Single-Day Orchestration
-
-Implement `HistoricalReplayRunner.run_day()`.
-
-Validate:
-
-```text
-Source Provider
-        ↓
-Connectors
-        ↓
-GCS
-        ↓
-BigQuery
-```
-
-for one transactional business date.
-
-### Phase 3 — Historical Range Replay
-
-Implement date-range iteration using the validated single-day execution path.
-
-Conceptually:
-
-```python
-for delivery_date in date_range:
-    run_day(delivery_date)
-```
-
-Historical replay should build upon the already-tested single-day workflow rather than introducing a separate loading implementation.
-
-### Phase 4 — Initial-Load Orchestration
-
-Automate the master/reference flow for:
-
-- customers;
-- products;
-- sellers;
-- geolocations.
-
-### Phase 5 — Future Source Adapters
-
-After Mercury's core platform is established, introduce additional source-delivery mechanisms such as REST API ingestion while preserving the downstream platform contracts.
-
----
-
-## Decision Summary
-
-Mercury will decouple source delivery from pipeline orchestration through a `SourceDeliveryProvider` abstraction.
-
-The existing Olist simulation framework will become the first provider implementation.
-
-Historical replay orchestration will coordinate:
-
-```text
-SourceDeliveryProvider
-        ↓
-Source Connectors
-        ↓
-GCSStorageManager
-        ↓
-BigQueryRawLoader
-```
-
-without absorbing the responsibilities of those components.
-
-Pipeline stages will remain independently executable.
-
-Historical daily replay will use a single business date as its fundamental execution and recovery unit.
-
-Immutable GCS Raw artifacts will remain the durable recovery source, while BigQuery Raw remains an idempotently replayable warehouse representation.
-
-REST API ingestion will not be implemented immediately, but the architecture will explicitly support its later introduction without requiring the downstream platform to be redesigned.
-
-This decision allows Mercury to validate its current CSV-based ingestion path while preserving its long-term objective of being a reusable, source-agnostic data platform.
+> Maximize safe source availability without confusing partial availability with complete delivery.
