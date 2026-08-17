@@ -4,6 +4,12 @@
 
 Accepted
 
+## Date
+
+2026-08-15
+
+---
+
 ## Context
 
 Mercury's ingestion framework was initially developed and validated using local filesystem storage.
