@@ -10,14 +10,25 @@ responsible for executing a batch of connectors and is unchanged.
 Also exposes the ADR-010 replay-state model (``ReplayStateStore``,
 ``ReplayStateRecord``, ``ReplayStatus``, ``ReplayStage``,
 ``is_date_complete``) and its BigQuery-backed implementation
-(``BigQueryReplayStateStore``). Phase 2 wires these into the runner, so
-this is now the package's stable public surface: a caller assembling a
-runner needs all of these names, not just the orchestration types.
-Internal helpers (e.g. ``HistoricalReplayRunner``'s private phase
-methods) are deliberately not re-exported here.
+(``BigQueryReplayStateStore``), plus the Phase 3A recovery planning
+model (``RecoveryAction``, ``RecoveryEvidence``, ``RecoveryPlanItem``,
+``RecoveryPlan``, ``RecoveryPlanner``). The recovery planner is a pure
+decision policy -- it is not yet wired into ``HistoricalReplayRunner``
+and executes nothing on its own; it is exported here because it is an
+independently usable, standalone public type, consistent with how every
+other meaningful type in this package is already exposed. Internal
+helpers (e.g. ``HistoricalReplayRunner``'s private phase methods) are
+deliberately not re-exported here.
 """
 
 from mercury_ingestion.orchestration.bigquery_replay_state import BigQueryReplayStateStore
+from mercury_ingestion.orchestration.recovery import (
+    RecoveryAction,
+    RecoveryEvidence,
+    RecoveryPlan,
+    RecoveryPlanItem,
+    RecoveryPlanner,
+)
 from mercury_ingestion.orchestration.replay import (
     CONNECTOR_MAP,
     HistoricalReplayDayResult,
@@ -42,6 +53,11 @@ __all__ = [
     "HistoricalReplayInitialResult",
     "HistoricalReplayRangeResult",
     "HistoricalReplayRunner",
+    "RecoveryAction",
+    "RecoveryEvidence",
+    "RecoveryPlan",
+    "RecoveryPlanItem",
+    "RecoveryPlanner",
     "ReplayStage",
     "ReplayStateRecord",
     "ReplayStateStore",
