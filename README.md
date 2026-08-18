@@ -381,7 +381,7 @@ replay-state persistence
 - [x] Transactional Partition Loading
 - [x] Reference Table Loading
 - [x] Replay-State Persistence Foundation
-- [ ] Replay Runner State Integration
+- [x] Replay Runner State Integration
 - [ ] Targeted Replay Recovery
 - [ ] Dataform Transformations
 
@@ -419,7 +419,7 @@ Implemented decisions currently include:
 - ADR-009 — Historical Replay Orchestration
 - ADR-010 — Replay State and Recovery Architecture
 
-ADR-010 is being implemented incrementally. Its state and persistence foundation is complete; runner integration and recovery behavior remain in development.
+ADR-010 is being implemented incrementally. Its state and persistence foundation and runner integration are complete; recovery behavior remain in development.
 
 ---
 
@@ -462,9 +462,22 @@ Mercury currently has a validated cloud ingestion path from simulated source del
 
 Both historical incremental replay and one-off reference loading have been successfully exercised against real GCP infrastructure.
 
-The current stable recovery foundation provides source-level append-only replay state and BigQuery-backed operational metadata.
+The current stable recovery foundation now includes both ADR-010 Phase 1 and Phase 2.
 
-The next engineering step is to complete ADR-010 runner integration and validate its recovery semantics before implementing targeted replay recovery.
+Historical incremental replay records durable append-only source-level state, correlates top-level replay invocations through `run_id`, isolates independent source failures within a business date, preserves successful sibling data, and distinguishes latest-attempt state from monotonic logical completion.
+
+Phase 2 has been validated against real GCP infrastructure through:
+
+- a successful three-day replay across 2017-05-16 through 2017-05-18;
+- replay-state persistence and shared `run_id` validation;
+- an already-complete date followed by failed reattempts without logical-completion regression;
+- a controlled 2017-05-19 partial-failure scenario where Payments failed ingestion while Orders, Order Items and Reviews continued successfully through BigQuery Raw.
+
+All integration-test data created for the historical date range was removed after validation so the development environment remains clean for a future full historical replay. The BigQuery Raw table structures remain available.
+
+The complete automated regression suite currently passes with 924 tests.
+
+The next engineering step is ADR-010 Phase 3: targeted recovery of incomplete source deliveries.
 
 ---
 

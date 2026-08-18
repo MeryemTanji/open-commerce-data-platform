@@ -180,17 +180,19 @@ Each completed milestone represents a meaningful addition to the platform.
 
 ### ADR-010 Phase 2 — Runner Integration
 
-- [ ] Finalise latest-attempt vs logical-completion semantics
-- [ ] Integrate ReplayStateStore with HistoricalReplayRunner
-- [ ] Introduce run_id across replay executions
-- [ ] Persist source-level ingestion state
-- [ ] Persist source-level warehouse state
-- [ ] Preserve ingestion/warehouse stage separation
-- [ ] Attempt all safe independent source work within a date
-- [ ] Support partial source availability
-- [ ] Derive date completeness from durable state
-- [ ] Stop range progression after incomplete dates
-- [ ] Validate Phase 2 against real GCP
+- [x] Finalise latest-attempt vs logical-completion semantics
+- [x] Integrate ReplayStateStore with HistoricalReplayRunner
+- [x] Introduce run_id across replay executions
+- [x] Persist source-level ingestion state
+- [x] Persist source-level warehouse state
+- [x] Preserve ingestion/warehouse stage separation
+- [x] Attempt all safe independent source work within a date
+- [x] Support partial source availability
+- [x] Derive date completeness from durable state
+- [x] Preserve monotonic logical completion after later failed attempts
+- [x] Stop range progression after incomplete dates
+- [x] Validate Phase 2 against real GCP
+- [x] Complete Phase 2 automated regression suite — 924 tests passing
 
 ### ADR-010 Phase 3 — Targeted Recovery
 
@@ -368,12 +370,18 @@ Completed:
 - historical replay orchestration
 - real GCS + BigQuery replay validation
 - ADR-010 Phase 1 replay-state foundation
+- ADR-010 Phase 2 stateful replay integration
+- source-level failure isolation within a business date
+- latest-attempt vs monotonic logical-completion semantics
+- real GCP validation of successful, reattempt and partial-failure replay scenarios
+- complete automated regression suite — 924 tests passing
 
 Current focus:
 
-- ADR-010 Phase 2 replay-state integration
-- logical completion semantics
-- recovery architecture
+- ADR-010 Phase 3 targeted recovery
+- incomplete-source identification
+- stage-aware retry behavior
+- reconciliation of physical Raw data and control-plane state
 
 ---
 
@@ -665,3 +673,71 @@ Both incremental historical replay and one-off reference loading have been valid
 The platform also has the first durable control-plane foundation for source-level replay history and future targeted recovery.
 
 The next engineering checkpoint is to finalise ADR-010 Phase 2's distinction between replay-attempt state and logical source completion before implementing automatic recovery.
+
+## Day 10 — Historical Replay State & Failure Isolation
+
+### ADR-010 Phase 2 — Stateful Historical Replay
+
+- [x] Integrate `ReplayStateStore` into `HistoricalReplayRunner`
+- [x] Introduce one `run_id` per top-level replay invocation
+- [x] Preserve unique `event_id` values for individual replay-state transitions
+- [x] Track replay state independently for each `(delivery_date, source_object)`
+- [x] Preserve explicit ingestion and warehouse stage boundaries
+- [x] Execute each daily connector independently through `IngestionRunner`
+- [x] Preserve connector-level `IngestionMetadata` during replay orchestration
+- [x] Attempt all safe ingestion work within a business date
+- [x] Prevent one source ingestion failure from blocking sibling sources
+- [x] Attempt warehouse loading independently for every successfully ingested source
+- [x] Prevent one warehouse failure from blocking eligible sibling sources
+- [x] Skip warehouse loading for sources that failed ingestion
+- [x] Preserve successfully materialised Raw data when another source for the same date fails
+- [x] Attach `partial_day_result` to incomplete-date replay errors
+- [x] Derive date completeness only after all safe work for the date has been attempted
+- [x] Stop historical range progression after the first genuinely incomplete date
+- [x] Treat replay-state persistence as control-plane state and fail immediately if it cannot be recorded
+
+### Replay-State Semantics
+
+- [x] Distinguish latest replay attempt from logical source completion
+- [x] Add `get_completed_for_date()` to the replay-state contract
+- [x] Implement logical-completion queries in `BigQueryReplayStateStore`
+- [x] Define `SUCCESS | WAREHOUSE` as the only successful source-completion state
+- [x] Make logical completion monotonic once a source has successfully materialised in BigQuery Raw
+- [x] Ensure a later failed replay attempt does not erase an earlier successful completion
+- [x] Preserve failed reattempts in append-only history for diagnostics and auditability
+- [x] Keep `is_date_complete()` as a pure completeness function operating on logical-completion records
+
+### Automated Validation
+
+- [x] Expand replay-state and orchestration coverage for Phase 2
+- [x] Validate successful per-source state-event sequences
+- [x] Validate shared `run_id` semantics across a replay invocation
+- [x] Validate unique `event_id` values for individual transitions
+- [x] Validate ingestion-failure isolation within a date
+- [x] Validate warehouse-failure isolation within a date
+- [x] Validate partial-day results after source failure
+- [x] Validate incomplete-date range stopping
+- [x] Validate monotonic logical completion after later failed attempts
+- [x] Run the complete automated test suite — 924 tests passing
+
+### Real GCP Integration Validation
+
+- [x] Execute a successful three-day historical replay for 2017-05-16 through 2017-05-18
+- [x] Validate all 12 transactional source deliveries through GCS Raw and BigQuery Raw
+- [x] Validate replay-state persistence in `metadata.historical_replay_state`
+- [x] Validate expected successful state sequence: `RUNNING | INGESTION` → `RUNNING | WAREHOUSE` → `SUCCESS | WAREHOUSE`
+- [x] Validate one shared `run_id` across the complete three-day `run_range()` invocation
+- [x] Validate 36 append-only replay-state events across 3 dates × 4 sources
+- [x] Re-run an already-complete date and validate that all four new ingestion attempts can fail without regressing logical completion
+- [x] Confirm latest-attempt state can be `FAILED | INGESTION` while logical completion remains `SUCCESS | WAREHOUSE`
+- [x] Create a controlled partial-failure scenario by pre-landing only Payments in immutable GCS Raw for 2017-05-19
+- [x] Validate Payments fails ingestion because its immutable destination already exists
+- [x] Validate Orders, Order Items, and Reviews continue independently through ingestion and BigQuery Raw loading
+- [x] Validate the partial replay returns 3/4 successful ingestion results and 3 successful warehouse results
+- [x] Validate Payments receives no warehouse attempt after failed ingestion
+- [x] Validate the business date is correctly classified as incomplete because Payments has never reached `SUCCESS | WAREHOUSE`
+- [x] Validate successfully materialised sibling sources remain available despite the incomplete date
+- [x] Clean local simulator, GCS Raw, BigQuery Raw, and replay-state test data after integration validation
+- [x] Preserve empty BigQuery Raw table structures for future full historical replay
+
+**Outcome:** ADR-010 Phase 2 is implemented and validated. Mercury now maintains durable, append-only source-level replay state while treating each business date as a completeness boundary containing independent source deliveries. Source failures no longer discard or block safe sibling work: successfully ingested sources continue to BigQuery Raw and remain available even when another source fails. Latest-attempt state is deliberately distinct from monotonic logical completion, allowing operational failures to remain visible without incorrectly invalidating data that was successfully materialised by an earlier run. An incomplete date stops progression to later dates only after all safe work for that date has been attempted. Targeted recovery execution remains Phase 3 of ADR-010.
