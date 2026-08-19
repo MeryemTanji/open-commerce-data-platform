@@ -287,6 +287,31 @@ Examples may include:
 
 A compromised runtime identity should not automatically provide unrestricted access to the entire Mercury environment.
 
+Mercury separates infrastructure provisioning from application execution. Human or deployment identities provision and administer cloud resources, while mercury-runtime receives only the permissions required for normal ingestion and orchestration. The runtime may create immutable Raw artifacts, execute BigQuery jobs, and operate within explicitly approved datasets, but it cannot delete Raw objects, create arbitrary datasets, or administer IAM.
+
+                HUMAN / INFRASTRUCTURE
+                         │
+              provision infrastructure
+                         │
+             ┌───────────┴───────────┐
+             ▼                       ▼
+           GCS Raw               BigQuery
+                                 raw / metadata
+             │                       │
+             └───────────┬───────────┘
+                         ▼
+                 mercury-runtime
+                         │
+              ONLY runtime operations
+                         │
+        ┌────────────────┼────────────────┐
+        ▼                ▼                ▼
+   create Raw       execute BQ       write approved
+    artifacts          jobs             datasets
+
+      ✕                ✕                ✕
+    delete         create datasets   administer IAM
+
 IAM design should be reviewed whenever a new component requires additional cloud capabilities.
 
 ## 8. Service-Account Security
