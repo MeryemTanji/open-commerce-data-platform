@@ -205,6 +205,37 @@ Each completed milestone represents a meaningful addition to the platform.
 - [ ] Re-evaluate date completeness after recovery
 - [ ] Validate recovery against real GCP
 
+### ADR-011 — Data Security, Privacy, and Data-Leak Prevention
+
+  - [x] Complete security audit of Mercury's persistence, logging, exception, storage, orchestration, and cloud boundaries.
+  - [x] Identify and document potential sensitive-data leakage paths.
+  - [x] Introduce the safe `OperationalError` contract for persisted operational failures.
+  - [x] Remove raw exception text from connector and historical replay persisted failure state.
+  - [x] Preserve exception chaining for transient in-process debugging without persisting provider exception content.
+  - [x] Add regression tests proving sensitive exception content cannot reach persisted operational metadata.
+  - [x] Inspect GCS Raw bucket security configuration and IAM.
+  - [x] Confirm Public Access Prevention is enforced on the Raw bucket.
+  - [x] Confirm Uniform Bucket-Level Access is enabled on the Raw bucket.
+  - [x] Create the dedicated `mercury-runtime` service account.
+  - [x] Grant runtime only the GCS object-creation capability required for Raw ingestion.
+  - [x] Grant runtime BigQuery job execution capability.
+  - [x] Grant explicit runtime access to the existing `raw` and `metadata` datasets.
+  - [x] Validate that runtime can create new Raw GCS objects.
+  - [x] Validate Raw object immutability using create-only generation preconditions.
+  - [x] Validate that runtime cannot delete Raw GCS objects.
+  - [x] Validate that runtime cannot broadly list project buckets.
+  - [x] Validate that runtime can submit BigQuery jobs.
+  - [x] Validate that runtime can write to the existing `raw` dataset.
+  - [x] Validate that runtime can write to and query the existing `metadata` dataset.
+  - [x] Validate that runtime cannot create arbitrary BigQuery datasets.
+  - [x] Validate `BigQueryReplayStateStore.ensure_resources()` under the restricted runtime identity.
+  - [x] Remove broad `projectReaders`, `projectWriters`, and `projectOwners` access from `raw`.
+  - [x] Remove broad `projectReaders`, `projectWriters`, and `projectOwners` access from `metadata`.
+  - [x] Re-test legitimate runtime operations after dataset ACL hardening.
+  - [x] Establish a human/infrastructure provisioning boundary separate from Mercury runtime execution.
+  - [x] Validate a keyless runtime model using short-lived service-account impersonation rather than downloaded service-account keys.
+  - [x] Document the security audit and infrastructure validation under `docs/security/`.
+
 ---
 
 # Sprint 3 — Analytics Engineering
@@ -741,3 +772,48 @@ The next engineering checkpoint is to finalise ADR-010 Phase 2's distinction bet
 - [x] Preserve empty BigQuery Raw table structures for future full historical replay
 
 **Outcome:** ADR-010 Phase 2 is implemented and validated. Mercury now maintains durable, append-only source-level replay state while treating each business date as a completeness boundary containing independent source deliveries. Source failures no longer discard or block safe sibling work: successfully ingested sources continue to BigQuery Raw and remain available even when another source fails. Latest-attempt state is deliberately distinct from monotonic logical completion, allowing operational failures to remain visible without incorrectly invalidating data that was successfully materialised by an earlier run. An incomplete date stops progression to later dates only after all safe work for that date has been attempted. Targeted recovery execution remains Phase 3 of ADR-010.
+
+## Day 11 - Data Security, Privacy, and Data-Leak Prevention
+
+ADR-011 was introduced before continuing targeted recovery execution to ensure
+Mercury's operational and infrastructure boundaries are safe for customer data.
+
+Completed:
+
+- **Phase 1 — Security Audit**
+  - Audited persistence, logging, exception, storage, orchestration, and cloud
+    boundaries for potential data leakage.
+  - Identified unsafe propagation of raw exception text into persisted
+    operational metadata.
+
+- **Phase 2 — Safe Operational Errors**
+  - Introduced Mercury-authored `OperationalError` values.
+  - Removed persistence of raw exception text from connector and replay failure
+    paths.
+  - Preserved exception chaining for transient debugging.
+  - Added security regression tests preventing sensitive exception content from
+    reaching persisted operational state.
+
+- **Phase 3 — Infrastructure Security and Least Privilege**
+  - Introduced a dedicated `mercury-runtime` service account.
+  - Applied least-privilege GCS and BigQuery permissions.
+  - Validated immutable Raw object creation and denied runtime deletion.
+  - Confirmed runtime cannot create arbitrary BigQuery datasets.
+  - Removed broad BigQuery `projectReaders`, `projectWriters`, and
+    `projectOwners` dataset access.
+  - Validated explicit runtime access after IAM hardening.
+  - Confirmed `BigQueryReplayStateStore` operates correctly within the
+    restricted runtime boundary.
+  - No long-lived service-account keys are required.
+
+Detailed security findings and validation evidence are maintained under
+`docs/security/`.
+
+**Status:** Complete.
+
+With ADR-011 complete, development resumes with ADR-010 Phase 3B — targeted
+recovery execution.
+
+  **Outcome:** Mercury now has an explicitly validated least-privilege runtime boundary, safe persisted operational errors, immutable Raw storage behavior, restricted destructive cloud access, explicit BigQuery dataset access, and separation between infrastructure administration and application runtime.
+
+  

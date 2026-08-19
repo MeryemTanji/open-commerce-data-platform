@@ -304,6 +304,37 @@ The state foundation is designed to support future targeted recovery without wea
 
 Runner integration and recovery execution remain under active development and are intentionally not considered complete yet.
 
+## Security by Design
+
+Mercury is designed to process customer and source data using explicit,
+least-privilege security boundaries.
+
+Key security properties include:
+
+- **Dedicated runtime identity** — deployed workloads use a bounded
+  `mercury-runtime` service account rather than developer credentials.
+- **Least-privilege cloud access** — runtime permissions are limited to the
+  GCS and BigQuery operations required by ingestion and orchestration.
+- **Immutable Raw landing** — Raw objects are written using create-only
+  generation preconditions, preventing accidental replacement of existing
+  artifacts.
+- **Restricted destructive access** — the runtime identity cannot delete Raw
+  GCS objects or administer storage infrastructure.
+- **Infrastructure/runtime separation** — datasets, buckets, and IAM are
+  provisioned outside the application runtime. Mercury cannot create arbitrary
+  BigQuery datasets.
+- **Explicit dataset access** — sensitive datasets do not rely on broad
+  `projectReaders`, `projectWriters`, or `projectOwners` dataset ACLs.
+- **Safe operational errors** — persisted failure metadata contains
+  Mercury-authored operational descriptions rather than raw provider or
+  exception text that could contain sensitive data.
+- **Keyless runtime authentication** — Mercury's runtime model does not require
+  long-lived downloaded service-account keys.
+
+Security decisions, audits, and validation evidence are documented in
+`architecture/decisions/ADR-011-Data Security, Privacy, and Data-Leak Prevention.md`
+and `docs/security/`.
+
 ---
 
 ## Technology Stack
@@ -382,6 +413,7 @@ replay-state persistence
 - [x] Reference Table Loading
 - [x] Replay-State Persistence Foundation
 - [x] Replay Runner State Integration
+- [x] Security hardening and data-leak prevention
 - [ ] Targeted Replay Recovery
 - [ ] Dataform Transformations
 
@@ -418,6 +450,7 @@ Implemented decisions currently include:
 - ADR-008 — BigQuery Raw Loading
 - ADR-009 — Historical Replay Orchestration
 - ADR-010 — Replay State and Recovery Architecture
+- ADR-011 — Security hardening and data-leak prevention
 
 ADR-010 is being implemented incrementally. Its state and persistence foundation and runner integration are complete; recovery behavior remain in development.
 
