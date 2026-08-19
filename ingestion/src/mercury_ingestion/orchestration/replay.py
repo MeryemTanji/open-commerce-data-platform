@@ -39,6 +39,7 @@ from datetime import date, datetime, timedelta, timezone
 from uuid import uuid4
 
 from mercury_ingestion.common.metadata import IngestionStatus
+from mercury_ingestion.common.operational_errors import OperationalError, OperationalErrorCategory
 from mercury_ingestion.common.storage import StorageManager
 from mercury_ingestion.connectors.base import BaseConnector, ConnectorRunResult
 from mercury_ingestion.connectors.customers import CustomerConnector
@@ -452,6 +453,12 @@ class HistoricalReplayRunner:
                 single_result = IngestionRunner([connector]).run_all(ingestion_date=delivery_date)
             except Exception as exc:
                 completion_time = _now()
+                operational_error = OperationalError(
+                    category=OperationalErrorCategory.UNEXPECTED_INTERNAL_ERROR,
+                    component="HistoricalReplayRunner",
+                    operation="ingestion",
+                    safe_message="Unexpected internal ingestion error",
+                )
                 self._append_state(
                     ReplayStateRecord.failed(
                         run_id=run_id,
@@ -462,14 +469,14 @@ class HistoricalReplayRunner:
                         started_at=source_started_at,
                         completed_at=completion_time,
                         recorded_at=completion_time,
-                        error_message=str(exc),
+                        error_message=operational_error.to_safe_string(),
                     ),
                     delivery_date=delivery_date,
                     source_object=source_object,
                 )
                 raise HistoricalReplayError(
                     f"unexpected error during ingestion for source_object={source_object!r} on "
-                    f"{delivery_date.isoformat()}: {exc}",
+                    f"{delivery_date.isoformat()}",
                     delivery_date=delivery_date,
                     stage="ingestion",
                     source_object=source_object,
@@ -555,8 +562,14 @@ class HistoricalReplayRunner:
                     gcs_uri=metadata.landing_path,
                     ingestion_date=delivery_date,
                 )
-            except Exception as exc:
+            except Exception:  # noqa: BLE001 - classified into a safe OperationalError, see docstring
                 completion_time = _now()
+                operational_error = OperationalError(
+                    category=OperationalErrorCategory.WAREHOUSE_LOAD_FAILED,
+                    component="HistoricalReplayRunner",
+                    operation="warehouse_load",
+                    safe_message="Warehouse load failed",
+                )
                 self._append_state(
                     ReplayStateRecord.failed(
                         run_id=run_id,
@@ -567,7 +580,7 @@ class HistoricalReplayRunner:
                         started_at=outcome.source_started_at,
                         completed_at=completion_time,
                         recorded_at=completion_time,
-                        error_message=str(exc),
+                        error_message=operational_error.to_safe_string(),
                     ),
                     delivery_date=delivery_date,
                     source_object=source_object,
@@ -610,9 +623,14 @@ class HistoricalReplayRunner:
         try:
             self.replay_state_store.append(record)
         except Exception as exc:
+            # Per ADR-011, the raised message is Mercury-authored and
+            # safe for future CLI/log/display use -- the original
+            # exception remains available transiently via `from exc`
+            # (normal exception chaining), but its arbitrary text is
+            # never embedded in this message.
             raise HistoricalReplayError(
                 f"failed to persist replay state (stage={record.stage.value}, status={record.status.value}) "
-                f"for source_object={source_object!r} on {delivery_date.isoformat()}: {exc}",
+                f"for source_object={source_object!r} on {delivery_date.isoformat()}",
                 delivery_date=delivery_date,
                 stage="state_store",
                 source_object=source_object,
@@ -690,9 +708,12 @@ class HistoricalReplayRunner:
                     ingestion_date=ingestion_date,
                 )
             except Exception as exc:
+                # Per ADR-011, safe orchestration-level message with the
+                # original exception preserved via chaining only -- see
+                # ``_append_state`` for the same rationale.
                 raise HistoricalReplayError(
                     f"warehouse load failed for source_object={metadata.source_object!r} on "
-                    f"{ingestion_date.isoformat()}: {exc}",
+                    f"{ingestion_date.isoformat()}",
                     delivery_date=ingestion_date,
                     stage="warehouse",
                     source_object=metadata.source_object,

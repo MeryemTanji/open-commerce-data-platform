@@ -162,7 +162,10 @@ class TestFailureHandling:
         result = connector.run()
 
         assert result.metadata.status is IngestionStatus.FAILED
-        assert "bad source" in result.metadata.error_message
+        # Per ADR-011, persisted failure text is a Mercury-authored safe
+        # operational error, not the raw exception message.
+        assert "category=source_validation_failed" in result.metadata.error_message
+        assert "bad source" not in result.metadata.error_message
 
     def test_record_counting_failure_returns_failed_metadata(self, tmp_path: Path) -> None:
         def _fail_count() -> int:
@@ -173,7 +176,8 @@ class TestFailureHandling:
         result = connector.run()
 
         assert result.metadata.status is IngestionStatus.FAILED
-        assert "count failed" in result.metadata.error_message
+        assert "category=record_count_failed" in result.metadata.error_message
+        assert "count failed" not in result.metadata.error_message
 
     def test_storage_failure_returns_failed_metadata(self, tmp_path: Path) -> None:
         storage_manager = LocalStorageManager(tmp_path / "landing")
@@ -196,9 +200,13 @@ class TestFailureHandling:
         result = second_connector.run(ingestion_date=date(2026, 1, 1))
 
         assert result.metadata.status is IngestionStatus.FAILED
-        assert "already exists" in result.metadata.error_message
+        assert "category=storage_write_failed" in result.metadata.error_message
+        assert "already exists" not in result.metadata.error_message
 
-    def test_failure_metadata_contains_exception_message(self, tmp_path: Path) -> None:
+    def test_failure_metadata_does_not_contain_raw_exception_message(self, tmp_path: Path) -> None:
+        # Supersedes the pre-ADR-011 expectation that the raw exception
+        # message was persisted verbatim -- that passthrough is exactly
+        # the vulnerability ADR-011 Phase 2 closes.
         def _fail_validation() -> None:
             raise ValueError("very specific problem")
 
@@ -206,7 +214,8 @@ class TestFailureHandling:
 
         result = connector.run()
 
-        assert result.metadata.error_message == "very specific problem"
+        assert "very specific problem" not in result.metadata.error_message
+        assert result.metadata.error_message.startswith("category=source_validation_failed")
 
     def test_failed_metadata_excludes_success_storage_fields(self, tmp_path: Path) -> None:
         def _fail_validation() -> None:
@@ -229,7 +238,7 @@ class TestRecordCountValidation:
         result = connector.run()
 
         assert result.metadata.status is IngestionStatus.FAILED
-        assert "int" in result.metadata.error_message
+        assert "category=record_count_failed" in result.metadata.error_message
 
     def test_bool_record_count_produces_failed_metadata(self, tmp_path: Path) -> None:
         connector = _make_connector(tmp_path, count_fn=lambda: True)
@@ -244,7 +253,7 @@ class TestRecordCountValidation:
         result = connector.run()
 
         assert result.metadata.status is IngestionStatus.FAILED
-        assert "non-negative" in result.metadata.error_message
+        assert "category=record_count_failed" in result.metadata.error_message
 
 
 class TestConstructorValidation:

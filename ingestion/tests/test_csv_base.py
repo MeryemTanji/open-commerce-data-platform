@@ -148,7 +148,11 @@ class TestValidateSource:
         result = connector.run()
 
         assert result.metadata.status is IngestionStatus.FAILED
-        assert "widget_name" in result.metadata.error_message
+        # Per ADR-011, the missing-column name is no longer echoed into
+        # persisted error text -- only Mercury's safe operational-error
+        # category is.
+        assert "category=source_validation_failed" in result.metadata.error_message
+        assert "widget_name" not in result.metadata.error_message
 
     def test_required_columns_in_different_order_are_accepted(self, tmp_path: Path) -> None:
         source_file = _write_csv(

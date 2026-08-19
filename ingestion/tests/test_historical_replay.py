@@ -1013,27 +1013,31 @@ class TestWarehouseFailureContinuesSameDateWork:
 
         assert exc_info.value.stage == "date_completion"
 
-    def test_original_exception_preserved_as_cause(self, tmp_path: Path) -> None:
+    def test_warehouse_exception_text_never_reaches_persisted_replay_state(self, tmp_path: Path) -> None:
+        # Supersedes the pre-ADR-011 expectation that the raw BigQuery
+        # exception message was persisted verbatim into replay state --
+        # per ADR-011, persisted error_message is always a Mercury-
+        # authored safe OperationalError, never str(exc). The warehouse
+        # phase never raises for an ordinary per-source load failure (it
+        # continues to the next eligible source), so there is no
+        # exception-chaining opportunity here at all; the exception's
+        # text is simply never carried into durable state.
         paths = _write_source_files(tmp_path)
         day = date(2017, 5, 1)
         runner, provider, storage_manager, bigquery_loader, replay_state_store = _make_runner(
             tmp_path, daily_batches={day: _daily_batch(paths, day)}
         )
-        original_exc = gcs_exceptions.ServiceUnavailable("backend down")
-        bigquery_loader._client.raise_for_destination["mercury-data-platform-dev.raw.payments$20170501"] = original_exc
+        sentinel_exc = gcs_exceptions.ServiceUnavailable("sensitive-test-sentinel@example.invalid")
+        bigquery_loader._client.raise_for_destination["mercury-data-platform-dev.raw.payments$20170501"] = sentinel_exc
 
-        # The FAILED|WAREHOUSE state-store append succeeds normally here,
-        # so processing continues past payments -- the original BigQuery
-        # exception is not re-raised at the top level (the date-
-        # completion error is), but the failure is fully represented in
-        # replay state with its message preserved.
         with pytest.raises(HistoricalReplayError):
             runner.run_day(day)
 
         payments_failure = next(
             e for e in replay_state_store.events if e.source_object == "payments" and e.status is ReplayStatus.FAILED
         )
-        assert "backend down" in payments_failure.error_message
+        assert "sensitive-test-sentinel@example.invalid" not in payments_failure.error_message
+        assert "category=warehouse_load_failed" in payments_failure.error_message
 
 
 class TestMultipleFailuresSameDate:

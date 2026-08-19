@@ -15,6 +15,7 @@ from datetime import date, datetime, timezone
 from pathlib import Path
 
 from mercury_ingestion.common.metadata import IngestionMetadata, IngestionStatus
+from mercury_ingestion.common.operational_errors import OperationalError, OperationalErrorCategory
 from mercury_ingestion.common.storage import StorageManager
 
 
@@ -103,6 +104,16 @@ class BaseConnector(ABC):
         ``BaseException`` is intentionally not caught: ``KeyboardInterrupt``
         and ``SystemExit`` must always propagate so the process can still
         be interrupted or exited normally.
+
+        Per ADR-011, the persisted failure text is always a Mercury-
+        authored ``OperationalError`` -- never ``str(exc)`` -- so an
+        arbitrary upstream exception (e.g. from a future connector's
+        source-format parser) can never place source/customer values
+        into durable ``IngestionMetadata.error_message``. Each of the
+        three lifecycle phases below is wrapped separately so the
+        resulting error can be classified by which known operation
+        boundary actually failed, without needing to parse or inspect
+        the exception itself.
         """
         metadata = IngestionMetadata.start(
             source_system=self.source_system,
@@ -114,24 +125,51 @@ class BaseConnector(ABC):
 
         try:
             self.validate_source()
-            record_count = self._validated_record_count()
+        except Exception:  # noqa: BLE001 - classified below, see docstring
+            operational_error = OperationalError(
+                category=OperationalErrorCategory.SOURCE_VALIDATION_FAILED,
+                component=type(self).__name__,
+                operation="validate_source",
+                safe_message="Source validation failed",
+            )
+            metadata = metadata.mark_failed(operational_error.to_safe_string())
+            return ConnectorRunResult(metadata=metadata)
 
+        try:
+            record_count = self._validated_record_count()
+        except Exception:  # noqa: BLE001 - classified below, see docstring
+            operational_error = OperationalError(
+                category=OperationalErrorCategory.RECORD_COUNT_FAILED,
+                component=type(self).__name__,
+                operation="count_records",
+                safe_message="Record counting failed",
+            )
+            metadata = metadata.mark_failed(operational_error.to_safe_string())
+            return ConnectorRunResult(metadata=metadata)
+
+        try:
             storage_result = self.storage_manager.save_file(
                 source_file=self.source_file,
                 source_system=self.source_system,
                 source_object=self.source_object,
                 ingestion_date=resolved_ingestion_date,
             )
-
-            metadata = metadata.mark_success(
-                landing_path=storage_result.landing_path,
-                file_size_bytes=storage_result.file_size_bytes,
-                checksum=storage_result.checksum,
-                record_count=record_count,
+        except Exception:  # noqa: BLE001 - classified below, see docstring
+            operational_error = OperationalError(
+                category=OperationalErrorCategory.STORAGE_WRITE_FAILED,
+                component=type(self).__name__,
+                operation="save_file",
+                safe_message="Raw landing failed",
             )
-        except Exception as exc:  # noqa: BLE001 - intentionally broad, see docstring
-            metadata = metadata.mark_failed(str(exc))
+            metadata = metadata.mark_failed(operational_error.to_safe_string())
+            return ConnectorRunResult(metadata=metadata)
 
+        metadata = metadata.mark_success(
+            landing_path=storage_result.landing_path,
+            file_size_bytes=storage_result.file_size_bytes,
+            checksum=storage_result.checksum,
+            record_count=record_count,
+        )
         return ConnectorRunResult(metadata=metadata)
 
     def _validated_record_count(self) -> int:
