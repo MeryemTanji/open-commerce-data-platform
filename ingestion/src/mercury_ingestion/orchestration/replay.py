@@ -42,14 +42,7 @@ from mercury_ingestion.common.metadata import IngestionStatus
 from mercury_ingestion.common.operational_errors import OperationalError, OperationalErrorCategory
 from mercury_ingestion.common.storage import StorageManager
 from mercury_ingestion.connectors.base import BaseConnector, ConnectorRunResult
-from mercury_ingestion.connectors.customers import CustomerConnector
-from mercury_ingestion.connectors.geolocations import GeolocationConnector
-from mercury_ingestion.connectors.order_items import OrderItemsConnector
-from mercury_ingestion.connectors.orders import OrdersConnector
-from mercury_ingestion.connectors.payments import PaymentsConnector
-from mercury_ingestion.connectors.products import ProductsConnector
-from mercury_ingestion.connectors.reviews import ReviewsConnector
-from mercury_ingestion.connectors.sellers import SellersConnector
+from mercury_ingestion.orchestration.connector_builder import CONNECTOR_MAP, build_connector
 from mercury_ingestion.orchestration.state import (
     ReplayStage,
     ReplayStateRecord,
@@ -60,20 +53,10 @@ from mercury_ingestion.runner import IngestionRunner, RunnerResult, RunnerStatus
 from mercury_ingestion.sources.base import SourceDelivery, SourceDeliveryBatch, SourceDeliveryProvider
 from mercury_ingestion.warehouse.bigquery_loader import BigQueryLoadResult, BigQueryRawLoader
 
-# Maps each stable Mercury source_object to its existing concrete
-# connector class. Deliberately explicit rather than derived, so the
-# mapping stays reviewable and never silently drifts from the actual
-# connector set.
-CONNECTOR_MAP: dict[str, type[BaseConnector]] = {
-    "customers": CustomerConnector,
-    "orders": OrdersConnector,
-    "order_items": OrderItemsConnector,
-    "products": ProductsConnector,
-    "sellers": SellersConnector,
-    "payments": PaymentsConnector,
-    "reviews": ReviewsConnector,
-    "geolocations": GeolocationConnector,
-}
+# CONNECTOR_MAP is re-exported from connector_builder here (not
+# redefined) so existing callers importing it from this module continue
+# to work unchanged -- see connector_builder.py for the single
+# authoritative copy, now shared with RecoveryExecutor (ADR-010 Phase 3B).
 
 # Expected source membership for each replay stage. Declared explicitly
 # here rather than imported from mercury_ingestion.simulation.olist, so
@@ -722,10 +705,13 @@ class HistoricalReplayRunner:
         return tuple(results)
 
     def _build_connector(self, delivery: SourceDelivery) -> BaseConnector:
-        connector_class = CONNECTOR_MAP.get(delivery.source_object)
-        if connector_class is None:
-            raise ValueError(f"unsupported source_object for historical replay: {delivery.source_object!r}")
-        return connector_class(source_file=delivery.path, storage_manager=self.storage_manager)
+        """Resolve one connector via the shared connector-construction helper.
+
+        Delegates entirely to ``connector_builder.build_connector()`` --
+        this method exists only as a thin, storage_manager-bound
+        convenience wrapper, not a second construction path.
+        """
+        return build_connector(delivery, self.storage_manager)
 
     @staticmethod
     def _validate_batch_membership(
