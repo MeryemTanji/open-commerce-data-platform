@@ -2989,6 +2989,25 @@ LOAD_ONLY
 RECONCILE
 MANUAL_REVIEW
 ```
+### Recovery Decision Matrix
+
+`RecoveryPlanner` determines the minimum safe recovery action from three pieces of evidence:
+
+- whether the logical source delivery has already completed successfully;
+- whether a validated immutable GCS Raw artifact is available;
+- whether the corresponding BigQuery Raw data is present.
+
+The Phase 3A decision matrix is:
+
+| Logical completion | Valid GCS Raw | BigQuery Raw present | Recovery action |
+|---|---|---|---|
+| Yes | Any | Any | `SKIP` |
+| No | No | No | `INGEST_AND_LOAD` |
+| No | Yes | No | `LOAD_ONLY` |
+| No | Yes | Yes | `RECONCILE` |
+| No | No | Yes | `MANUAL_REVIEW` |
+
+The matrix follows a minimum-safe-work principle.
 
 ---
 

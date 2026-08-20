@@ -140,6 +140,16 @@ class TestNewDailyDelivery:
 
         assert all(d.delivery_date == date(2017, 5, 1) for d in batch.deliveries)
 
+    def test_ingestion_date_is_delivery_date_plus_one_day(self, tmp_path: Path) -> None:
+        source_dir = _build_source_directory(tmp_path)
+        simulator = OlistSourceSimulator(source_directory=source_dir, output_directory=tmp_path / "sim_out")
+        provider = OlistSimulatedSourceProvider(simulator)
+
+        batch = provider.get_daily_delivery(date(2017, 5, 19))
+
+        assert batch.delivery_date == date(2017, 5, 19)
+        assert batch.ingestion_date == date(2017, 5, 20)
+
 
 class TestExistingCompleteInitialDelivery:
     def test_returns_without_regenerating(self, tmp_path: Path) -> None:
@@ -177,6 +187,23 @@ class TestExistingCompleteInitialDelivery:
         provider.get_initial_delivery()
 
         assert customers_path.read_bytes() == original_bytes
+
+    def test_ingestion_date_remains_none(self, tmp_path: Path) -> None:
+        # Initial/reference delivery has no daily-simulation timing
+        # policy applied to it -- no simulated initial ingestion date is
+        # invented, for either the newly-generated or already-existing
+        # path.
+        source_dir = _build_source_directory(tmp_path)
+        simulator = OlistSourceSimulator(source_directory=source_dir, output_directory=tmp_path / "sim_out")
+        provider = OlistSimulatedSourceProvider(simulator)
+
+        first_batch = provider.get_initial_delivery()  # newly generated
+        second_batch = provider.get_initial_delivery()  # already exists on disk
+
+        assert first_batch.delivery_date is None
+        assert first_batch.ingestion_date is None
+        assert second_batch.delivery_date is None
+        assert second_batch.ingestion_date is None
 
 
 class TestExistingCompleteDailyDelivery:
@@ -220,6 +247,21 @@ class TestExistingCompleteDailyDelivery:
         second_batch = provider.get_daily_delivery(date(2017, 5, 1))
 
         assert all(d.record_count == 0 for d in second_batch.deliveries)
+
+    def test_existing_delivery_ingestion_date_matches_newly_generated(self, tmp_path: Path) -> None:
+        # Item under test: "Existing-Delivery Requirement" -- newly
+        # generated and already-materialized daily deliveries for the
+        # same business date must produce identical delivery_date and
+        # ingestion_date, regardless of which code path served them.
+        source_dir = _build_source_directory(tmp_path)
+        simulator = OlistSourceSimulator(source_directory=source_dir, output_directory=tmp_path / "sim_out")
+        provider = OlistSimulatedSourceProvider(simulator)
+
+        first_batch = provider.get_daily_delivery(date(2017, 5, 19))  # newly generated
+        second_batch = provider.get_daily_delivery(date(2017, 5, 19))  # already exists on disk
+
+        assert first_batch.delivery_date == second_batch.delivery_date == date(2017, 5, 19)
+        assert first_batch.ingestion_date == second_batch.ingestion_date == date(2017, 5, 20)
 
 
 class TestExistingPartialDelivery:

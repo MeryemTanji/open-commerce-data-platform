@@ -113,6 +113,50 @@ class TestSourceDeliveryBatch:
                 delivery_date=None,
             )
 
+    def test_ingestion_date_defaults_to_none(self) -> None:
+        batch = SourceDeliveryBatch(deliveries=(_delivery(),), delivery_date=date(2017, 5, 1))
+
+        assert batch.ingestion_date is None
+
+    def test_ingestion_date_accepts_a_date(self) -> None:
+        batch = SourceDeliveryBatch(
+            deliveries=(_delivery(delivery_date=date(2017, 5, 1)),),
+            delivery_date=date(2017, 5, 1),
+            ingestion_date=date(2017, 5, 2),
+        )
+
+        assert batch.ingestion_date == date(2017, 5, 2)
+
+    def test_ingestion_date_accepts_none_explicitly(self) -> None:
+        batch = SourceDeliveryBatch(
+            deliveries=(_delivery(delivery_date=date(2017, 5, 1)),),
+            delivery_date=date(2017, 5, 1),
+            ingestion_date=None,
+        )
+
+        assert batch.ingestion_date is None
+
+    def test_invalid_ingestion_date_type_rejected(self) -> None:
+        with pytest.raises(TypeError):
+            SourceDeliveryBatch(
+                deliveries=(_delivery(delivery_date=date(2017, 5, 1)),),
+                delivery_date=date(2017, 5, 1),
+                ingestion_date="2017-05-02",  # type: ignore[arg-type]
+            )
+
+    def test_ingestion_date_may_differ_from_delivery_date(self) -> None:
+        # No cross-field consistency check is expected here -- unlike
+        # delivery_date (which every contained SourceDelivery must
+        # match exactly), ingestion_date is purely a batch-level timing
+        # fact and is free to differ from delivery_date.
+        batch = SourceDeliveryBatch(
+            deliveries=(_delivery(delivery_date=date(2017, 5, 1)),),
+            delivery_date=date(2017, 5, 1),
+            ingestion_date=date(2017, 5, 2),
+        )
+
+        assert batch.delivery_date != batch.ingestion_date
+
     def test_empty_deliveries_with_none_date_rejected(self) -> None:
         with pytest.raises(ValueError):
             SourceDeliveryBatch(deliveries=(), delivery_date=None)

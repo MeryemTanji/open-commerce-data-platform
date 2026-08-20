@@ -14,12 +14,25 @@ delivery). If a delivery directory exists but is missing one or more
 expected files, that is treated as a corrupt/partial delivery and
 rejected clearly rather than silently completed, silently returned as a
 partial batch, or silently regenerated over.
+
+This provider also owns Mercury's Olist-specific historical-simulation
+timing policy: for one business date ``D``, the simulated data is
+treated as becoming available for ingestion on ``D + 1`` day, modeling
+what a real daily API delivery would look like (data for a business day
+typically only becomes available for processing the following day).
+This is *only* a simulation-timing convention -- ``OlistSourceSimulator``
+itself remains entirely unaware of it (its own ``simulation_date``
+concept, and the ``daily/<simulation_date>/`` directory it generates,
+are untouched by this policy), and no other Mercury component may
+derive this offset itself. A future real API-backed
+``SourceDeliveryProvider`` supplies its own genuine ingestion date and
+has no reason to inherit this Olist-only rule.
 """
 
 from __future__ import annotations
 
 import csv
-from datetime import date
+from datetime import date, timedelta
 from pathlib import Path
 
 from mercury_ingestion.simulation.olist import (
@@ -66,13 +79,34 @@ class OlistSimulatedSourceProvider(SourceDeliveryProvider):
         return self._adapt_initial_result(result)
 
     def get_daily_delivery(self, delivery_date: date) -> SourceDeliveryBatch:
-        """Return one day's delivery, generating it only if not already present."""
+        """Return one day's delivery, generating it only if not already present.
+
+        The returned batch's ``ingestion_date`` is always
+        ``delivery_date + 1 day`` (Mercury's Olist historical-simulation
+        timing convention), regardless of whether this call regenerates
+        the delivery or adapts an already-materialized one -- the two
+        paths must never diverge in their timing semantics.
+        """
         destination_dir = self.simulator.output_directory / "daily" / delivery_date.isoformat()
+        ingestion_date = self._daily_ingestion_date(delivery_date)
         if destination_dir.exists():
-            return self._adapt_existing(destination_dir, DAILY_SOURCE_OBJECTS, delivery_date=delivery_date)
+            return self._adapt_existing(
+                destination_dir, DAILY_SOURCE_OBJECTS, delivery_date=delivery_date, ingestion_date=ingestion_date
+            )
 
         result = self.simulator.generate_daily_load(delivery_date)
         return self._adapt_daily_result(result)
+
+    @staticmethod
+    def _daily_ingestion_date(delivery_date: date) -> date:
+        """Mercury's single definition of the Olist daily-simulation timing rule.
+
+        Business data for ``delivery_date`` is treated as becoming
+        available for ingestion the following calendar day -- this is
+        an Olist-historical-simulation convention only, defined exactly
+        once, here.
+        """
+        return delivery_date + timedelta(days=1)
 
     def _adapt_initial_result(self, result: InitialSimulationResult) -> SourceDeliveryBatch:
         deliveries = tuple(
@@ -96,13 +130,18 @@ class OlistSimulatedSourceProvider(SourceDeliveryProvider):
             )
             for simulated_file in result.files
         )
-        return SourceDeliveryBatch(deliveries=deliveries, delivery_date=result.simulation_date)
+        return SourceDeliveryBatch(
+            deliveries=deliveries,
+            delivery_date=result.simulation_date,
+            ingestion_date=self._daily_ingestion_date(result.simulation_date),
+        )
 
     def _adapt_existing(
         self,
         destination_dir: Path,
         expected_source_objects: tuple[str, ...],
         delivery_date: date | None,
+        ingestion_date: date | None = None,
     ) -> SourceDeliveryBatch:
         """Adapt an already-generated, on-disk delivery without regenerating it.
 
@@ -137,4 +176,4 @@ class OlistSimulatedSourceProvider(SourceDeliveryProvider):
                 f"source(s): {', '.join(sorted(missing))}"
             )
 
-        return SourceDeliveryBatch(deliveries=tuple(deliveries), delivery_date=delivery_date)
+        return SourceDeliveryBatch(deliveries=tuple(deliveries), delivery_date=delivery_date, ingestion_date=ingestion_date)

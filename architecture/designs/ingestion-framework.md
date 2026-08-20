@@ -129,3 +129,39 @@ For example:
 2017-05-03
     orders created on 2017-05-03
 ```
+
+### Simulated Delivery and Ingestion Dates
+
+Mercury distinguishes the business date represented by a source delivery from the date on which that delivery is ingested.
+
+For the Olist historical simulation:
+
+```text
+delivery_date
+    = business date represented by the source records
+
+ingestion_date
+    = simulated date on which Mercury processes that delivery
+```
+
+Transactional daily deliveries are simulated as being ingested on the following calendar day:
+
+```text
+ingestion_date = delivery_date + 1 day
+```
+
+For example:
+
+```text
+order_purchase_timestamp = 2017-05-19
+delivery_date             = 2017-05-19
+ingestion_date            = 2017-05-20
+```
+
+The `delivery_date` remains the logical date of the incremental delivery and determines the corresponding business-date partition in Raw storage and BigQuery.
+
+The `ingestion_date` represents when the simulated ingestion process runs.
+
+This `+1 day` relationship is specific to the Olist historical simulation. It is not a generic Mercury ingestion rule and must not be encoded into reusable connector, storage, warehouse-loading, replay, or recovery components.
+
+A future production source integration should provide its actual delivery and processing timing according to that source's real delivery behaviour rather than applying the Olist simulation rule.

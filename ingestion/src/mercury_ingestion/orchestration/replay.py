@@ -361,7 +361,15 @@ class HistoricalReplayRunner:
         source_batch = self.source_provider.get_daily_delivery(delivery_date)
         self._validate_batch_membership(source_batch, DAILY_SOURCE_OBJECTS, delivery_date)
 
-        outcomes = self._run_ingestion_phase(source_batch.deliveries, delivery_date, run_id)
+        # source_batch.ingestion_date is consumed as-supplied, never
+        # derived here -- any provider-specific timing policy (e.g.
+        # Mercury's Olist historical-simulation "+1 day" convention)
+        # belongs entirely to the provider. A provider that leaves it
+        # unset (None) is treated as having no distinct ingestion date,
+        # so delivery_date remains the sensible default.
+        ingestion_date = source_batch.ingestion_date if source_batch.ingestion_date is not None else delivery_date
+
+        outcomes = self._run_ingestion_phase(source_batch.deliveries, delivery_date, ingestion_date, run_id)
         warehouse_results = self._run_warehouse_phase(outcomes, delivery_date, run_id)
 
         connector_results = tuple(outcome.connector_result for outcome in outcomes)
@@ -399,7 +407,7 @@ class HistoricalReplayRunner:
         return day_result
 
     def _run_ingestion_phase(
-        self, deliveries: tuple[SourceDelivery, ...], delivery_date: date, run_id: str
+        self, deliveries: tuple[SourceDelivery, ...], delivery_date: date, ingestion_date: date, run_id: str
     ) -> list[_SourceIngestionOutcome]:
         """Attempt ingestion for every expected source; never stop on an individual failure.
 
@@ -411,6 +419,14 @@ class HistoricalReplayRunner:
         programming-contract violation per BaseConnector's own
         docstring, not an ordinary ingestion failure) does abort
         immediately, with the original exception preserved as cause.
+
+        ``delivery_date`` (the business/source date) drives replay-state
+        identity and BigQuery partition routing; ``ingestion_date`` (the
+        date on which this delivery became available for processing --
+        which may differ from ``delivery_date``, e.g. for Mercury's
+        Olist historical-simulation "+1 day" timing) drives the
+        connector's own ingestion/landing behavior. The two are never
+        conflated here.
         """
         outcomes: list[_SourceIngestionOutcome] = []
         for delivery in deliveries:
@@ -433,7 +449,7 @@ class HistoricalReplayRunner:
 
             connector = self._build_connector(delivery)
             try:
-                single_result = IngestionRunner([connector]).run_all(ingestion_date=delivery_date)
+                single_result = IngestionRunner([connector]).run_all(ingestion_date=ingestion_date)
             except Exception as exc:
                 completion_time = _now()
                 operational_error = OperationalError(
@@ -543,7 +559,7 @@ class HistoricalReplayRunner:
                 load_result = self.bigquery_loader.load(
                     source_object=metadata.source_object,
                     gcs_uri=metadata.landing_path,
-                    ingestion_date=delivery_date,
+                    partition_date=delivery_date,
                 )
             except Exception:  # noqa: BLE001 - classified into a safe OperationalError, see docstring
                 completion_time = _now()
@@ -688,7 +704,7 @@ class HistoricalReplayRunner:
                 load_result = self.bigquery_loader.load(
                     source_object=metadata.source_object,
                     gcs_uri=metadata.landing_path,
-                    ingestion_date=ingestion_date,
+                    partition_date=ingestion_date,
                 )
             except Exception as exc:
                 # Per ADR-011, safe orchestration-level message with the

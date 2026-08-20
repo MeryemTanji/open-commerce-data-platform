@@ -540,9 +540,50 @@ class TestDateHandoff:
         assert all("ingestion_date=2017-05-03" in r.metadata.landing_path for r in result.ingestion_result.results)
         # BigQuery's transactional destinations carry the same date.
         assert all(w.destination.endswith("$20170503") for w in result.warehouse_results)
-        assert all(w.ingestion_date == day for w in result.warehouse_results)
+        assert all(w.partition_date == day for w in result.warehouse_results)
         # Replay-state events also carry the same delivery date.
         assert all(event.delivery_date == day for event in replay_state_store.events)
+
+    def test_distinct_batch_ingestion_date_flows_correctly_to_connector_not_bigquery(self, tmp_path: Path) -> None:
+        """Proves the two date concepts remain separated across the full replay path.
+
+        Mirrors what OlistSimulatedSourceProvider actually produces for
+        an Olist daily batch: delivery_date and a distinct
+        (delivery_date + 1 day) ingestion_date. HistoricalReplayRunner
+        must consume batch.ingestion_date for connector/GCS work while
+        continuing to use delivery_date for BigQuery partition routing
+        and replay-state identity -- it must never derive the +1 day
+        offset itself (that remains the Olist provider's responsibility,
+        exercised separately in test_simulated_olist_provider.py).
+        """
+        paths = _write_source_files(tmp_path)
+        delivery_date = date(2017, 5, 19)
+        ingestion_date = date(2017, 5, 20)
+        batch = SourceDeliveryBatch(
+            deliveries=(
+                SourceDelivery(source_object="orders", path=paths["orders"], delivery_date=delivery_date, record_count=1),
+                SourceDelivery(source_object="order_items", path=paths["order_items"], delivery_date=delivery_date, record_count=1),
+                SourceDelivery(source_object="payments", path=paths["payments"], delivery_date=delivery_date, record_count=1),
+                SourceDelivery(source_object="reviews", path=paths["reviews"], delivery_date=delivery_date, record_count=1),
+            ),
+            delivery_date=delivery_date,
+            ingestion_date=ingestion_date,
+        )
+        runner, provider, storage_manager, bigquery_loader, replay_state_store = _make_runner(
+            tmp_path, daily_batches={delivery_date: batch}
+        )
+
+        result = runner.run_day(delivery_date)
+
+        # Connector ingestion / GCS landing used the provider-supplied
+        # ingestion_date (D + 1), not delivery_date.
+        assert all("ingestion_date=2017-05-20" in r.metadata.landing_path for r in result.ingestion_result.results)
+        assert all("ingestion_date=2017-05-19" not in r.metadata.landing_path for r in result.ingestion_result.results)
+        # BigQuery partition routing still used delivery_date (D), unchanged.
+        assert all(w.destination.endswith("$20170519") for w in result.warehouse_results)
+        assert all(w.partition_date == delivery_date for w in result.warehouse_results)
+        # Replay-state identity still uses delivery_date (D), unchanged.
+        assert all(event.delivery_date == delivery_date for event in replay_state_store.events)
 
 
 class TestBatchMembershipValidation:

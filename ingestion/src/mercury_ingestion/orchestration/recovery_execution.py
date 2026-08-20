@@ -340,7 +340,10 @@ class RecoveryExecutor:
         artifacts_by_source = self._validate_request(plan, tuple(validated_raw_artifacts))
 
         ingest_items = [item for item in plan.items if item.action is RecoveryAction.INGEST_AND_LOAD]
-        deliveries_by_source = self._fetch_deliveries(plan.delivery_date, ingest_items) if ingest_items else {}
+        if ingest_items:
+            deliveries_by_source, ingestion_date = self._fetch_deliveries(plan.delivery_date, ingest_items)
+        else:
+            deliveries_by_source, ingestion_date = {}, plan.delivery_date
 
         run_id = str(uuid4())
         results: list[RecoveryItemExecutionResult] = []
@@ -356,7 +359,7 @@ class RecoveryExecutor:
             else:
                 results.append(
                     self._execute_ingest_and_load(
-                        item, plan.delivery_date, run_id, deliveries_by_source[item.source_object]
+                        item, plan.delivery_date, ingestion_date, run_id, deliveries_by_source[item.source_object]
                     )
                 )
 
@@ -406,7 +409,7 @@ class RecoveryExecutor:
 
     def _fetch_deliveries(
         self, delivery_date: date, ingest_items: list[RecoveryPlanItem]
-    ) -> dict[str, SourceDelivery]:
+    ) -> tuple[dict[str, SourceDelivery], date]:
         """Fetch the day's source batch exactly once, for INGEST_AND_LOAD items only.
 
         Every required source_object must resolve to exactly one
@@ -417,6 +420,13 @@ class RecoveryExecutor:
         ignored, not rejected. This validation happens before any
         replay-state append, connector creation, storage work, or
         BigQuery work for the affected sources.
+
+        Also returns the effective ingestion date for this batch:
+        ``batch.ingestion_date`` if the provider supplied one, else
+        ``delivery_date`` as the sensible default. This method only
+        *consumes* whatever the provider returned -- it never derives a
+        provider-specific timing offset (e.g. Mercury's Olist "+1 day"
+        historical-simulation convention) itself.
 
         A source-provider failure never produces a fake source-level
         result -- it raises ``RecoveryExecutionError`` immediately, with
@@ -430,6 +440,8 @@ class RecoveryExecutor:
                 f"failed to obtain source delivery batch for {delivery_date.isoformat()}",
                 delivery_date=delivery_date,
             ) from exc
+
+        ingestion_date = batch.ingestion_date if batch.ingestion_date is not None else delivery_date
 
         needed = {item.source_object for item in ingest_items}
         matches_by_source: dict[str, list[SourceDelivery]] = {source_object: [] for source_object in needed}
@@ -453,7 +465,7 @@ class RecoveryExecutor:
                 delivery_date=delivery_date,
             )
 
-        return {source_object: matches[0] for source_object, matches in matches_by_source.items()}
+        return {source_object: matches[0] for source_object, matches in matches_by_source.items()}, ingestion_date
 
     @staticmethod
     def _skip(item: RecoveryPlanItem) -> RecoveryItemExecutionResult:
@@ -493,7 +505,7 @@ class RecoveryExecutor:
 
         try:
             warehouse_result = self.bigquery_loader.load(
-                source_object=source_object, gcs_uri=artifact.gcs_uri, ingestion_date=delivery_date
+                source_object=source_object, gcs_uri=artifact.gcs_uri, partition_date=delivery_date
             )
         except Exception:  # noqa: BLE001 - converted into a safe OperationalError below
             completion_time = _now()
@@ -546,7 +558,7 @@ class RecoveryExecutor:
         )
 
     def _execute_ingest_and_load(
-        self, item: RecoveryPlanItem, delivery_date: date, run_id: str, delivery: SourceDelivery
+        self, item: RecoveryPlanItem, delivery_date: date, ingestion_date: date, run_id: str, delivery: SourceDelivery
     ) -> RecoveryItemExecutionResult:
         source_object = item.source_object
         started_at = _now()
@@ -566,7 +578,7 @@ class RecoveryExecutor:
         )
 
         connector = build_connector(delivery, self.storage_manager)
-        connector_result = connector.run(ingestion_date=delivery_date)
+        connector_result = connector.run(ingestion_date=ingestion_date)
 
         if connector_result.metadata.status is not IngestionStatus.SUCCESS:
             # BaseConnector.run() never emits raw exception text -- this
@@ -612,7 +624,7 @@ class RecoveryExecutor:
             warehouse_result = self.bigquery_loader.load(
                 source_object=connector_result.metadata.source_object,
                 gcs_uri=connector_result.metadata.landing_path,
-                ingestion_date=delivery_date,
+                partition_date=delivery_date,
             )
         except Exception:  # noqa: BLE001 - converted into a safe OperationalError below
             completion_time = _now()

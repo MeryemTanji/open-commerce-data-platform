@@ -152,31 +152,31 @@ class TestInputValidation:
         loader = _make_loader()
 
         with pytest.raises(ValueError):
-            loader.load(source_object="unknown_source", gcs_uri=GCS_URI, ingestion_date=date(2017, 5, 10))
+            loader.load(source_object="unknown_source", gcs_uri=GCS_URI, partition_date=date(2017, 5, 10))
 
     def test_blank_source_object_rejected(self) -> None:
         loader = _make_loader()
 
         with pytest.raises(ValueError):
-            loader.load(source_object="   ", gcs_uri=GCS_URI, ingestion_date=date(2017, 5, 10))
+            loader.load(source_object="   ", gcs_uri=GCS_URI, partition_date=date(2017, 5, 10))
 
     def test_blank_gcs_uri_rejected(self) -> None:
         loader = _make_loader()
 
         with pytest.raises(ValueError):
-            loader.load(source_object="orders", gcs_uri="", ingestion_date=date(2017, 5, 10))
+            loader.load(source_object="orders", gcs_uri="", partition_date=date(2017, 5, 10))
 
     def test_non_gs_uri_rejected(self) -> None:
         loader = _make_loader()
 
         with pytest.raises(ValueError):
-            loader.load(source_object="orders", gcs_uri="https://example.com/x.csv", ingestion_date=date(2017, 5, 10))
+            loader.load(source_object="orders", gcs_uri="https://example.com/x.csv", partition_date=date(2017, 5, 10))
 
-    def test_invalid_ingestion_date_type_rejected(self) -> None:
+    def test_invalid_partition_date_type_rejected(self) -> None:
         loader = _make_loader()
 
         with pytest.raises(TypeError):
-            loader.load(source_object="orders", gcs_uri=GCS_URI, ingestion_date="2017-05-10")  # type: ignore[arg-type]
+            loader.load(source_object="orders", gcs_uri=GCS_URI, partition_date="2017-05-10")  # type: ignore[arg-type]
 
 
 class TestMasterReferenceDestination:
@@ -184,7 +184,7 @@ class TestMasterReferenceDestination:
     def test_destination_is_whole_table_no_partition_decorator(self, source_object: str) -> None:
         loader = _make_loader()
 
-        result = loader.load(source_object=source_object, gcs_uri=GCS_URI, ingestion_date=date(2017, 5, 10))
+        result = loader.load(source_object=source_object, gcs_uri=GCS_URI, partition_date=date(2017, 5, 10))
 
         assert result.destination == f"{PROJECT_ID}.{DATASET_ID}.{source_object}"
         assert "$" not in result.destination
@@ -195,14 +195,14 @@ class TestTransactionalDestination:
     def test_destination_has_yyyymmdd_partition_decorator(self, source_object: str) -> None:
         loader = _make_loader()
 
-        result = loader.load(source_object=source_object, gcs_uri=GCS_URI, ingestion_date=date(2017, 5, 10))
+        result = loader.load(source_object=source_object, gcs_uri=GCS_URI, partition_date=date(2017, 5, 10))
 
         assert result.destination == f"{PROJECT_ID}.{DATASET_ID}.{source_object}$20170510"
 
     def test_partition_decorator_date_format_is_exact(self) -> None:
         loader = _make_loader()
 
-        result = loader.load(source_object="orders", gcs_uri=GCS_URI, ingestion_date=date(2017, 1, 5))
+        result = loader.load(source_object="orders", gcs_uri=GCS_URI, partition_date=date(2017, 1, 5))
 
         assert result.destination.endswith("$20170105")
 
@@ -211,7 +211,7 @@ class TestWriteDisposition:
     def test_every_load_uses_write_truncate(self) -> None:
         loader = _make_loader()
 
-        loader.load(source_object="orders", gcs_uri=GCS_URI, ingestion_date=date(2017, 5, 10))
+        loader.load(source_object="orders", gcs_uri=GCS_URI, partition_date=date(2017, 5, 10))
 
         job_config = loader._client.load_calls[-1].job_config
         assert job_config.write_disposition == bigquery.WriteDisposition.WRITE_TRUNCATE
@@ -219,7 +219,7 @@ class TestWriteDisposition:
     def test_master_reference_targets_whole_table(self) -> None:
         loader = _make_loader()
 
-        loader.load(source_object="customers", gcs_uri=GCS_URI, ingestion_date=date(2017, 5, 10))
+        loader.load(source_object="customers", gcs_uri=GCS_URI, partition_date=date(2017, 5, 10))
 
         destination = loader._client.load_calls[-1].destination
         assert destination == f"{PROJECT_ID}.{DATASET_ID}.customers"
@@ -227,7 +227,7 @@ class TestWriteDisposition:
     def test_transactional_targets_decorated_partition(self) -> None:
         loader = _make_loader()
 
-        loader.load(source_object="orders", gcs_uri=GCS_URI, ingestion_date=date(2017, 5, 10))
+        loader.load(source_object="orders", gcs_uri=GCS_URI, partition_date=date(2017, 5, 10))
 
         destination = loader._client.load_calls[-1].destination
         assert destination == f"{PROJECT_ID}.{DATASET_ID}.orders$20170510"
@@ -237,7 +237,7 @@ class TestTableCreation:
     def test_create_if_needed_is_configured(self) -> None:
         loader = _make_loader()
 
-        loader.load(source_object="orders", gcs_uri=GCS_URI, ingestion_date=date(2017, 5, 10))
+        loader.load(source_object="orders", gcs_uri=GCS_URI, partition_date=date(2017, 5, 10))
 
         job_config = loader._client.load_calls[-1].job_config
         assert job_config.create_disposition == bigquery.CreateDisposition.CREATE_IF_NEEDED
@@ -247,7 +247,7 @@ class TestExplicitSchema:
     def test_autodetect_is_disabled(self) -> None:
         loader = _make_loader()
 
-        loader.load(source_object="orders", gcs_uri=GCS_URI, ingestion_date=date(2017, 5, 10))
+        loader.load(source_object="orders", gcs_uri=GCS_URI, partition_date=date(2017, 5, 10))
 
         job_config = loader._client.load_calls[-1].job_config
         assert job_config.autodetect is False
@@ -258,7 +258,7 @@ class TestExplicitSchema:
     def test_correct_explicit_schema_provided(self, source_object: str) -> None:
         loader = _make_loader()
 
-        loader.load(source_object=source_object, gcs_uri=GCS_URI, ingestion_date=date(2017, 5, 10))
+        loader.load(source_object=source_object, gcs_uri=GCS_URI, partition_date=date(2017, 5, 10))
 
         job_config = loader._client.load_calls[-1].job_config
         assert list(job_config.schema) == list(get_raw_schema(source_object))
@@ -268,7 +268,7 @@ class TestCsvConfiguration:
     def test_source_format_is_csv(self) -> None:
         loader = _make_loader()
 
-        loader.load(source_object="orders", gcs_uri=GCS_URI, ingestion_date=date(2017, 5, 10))
+        loader.load(source_object="orders", gcs_uri=GCS_URI, partition_date=date(2017, 5, 10))
 
         job_config = loader._client.load_calls[-1].job_config
         assert job_config.source_format == bigquery.SourceFormat.CSV
@@ -276,7 +276,7 @@ class TestCsvConfiguration:
     def test_skip_leading_rows_is_one(self) -> None:
         loader = _make_loader()
 
-        loader.load(source_object="orders", gcs_uri=GCS_URI, ingestion_date=date(2017, 5, 10))
+        loader.load(source_object="orders", gcs_uri=GCS_URI, partition_date=date(2017, 5, 10))
 
         job_config = loader._client.load_calls[-1].job_config
         assert job_config.skip_leading_rows == 1
@@ -284,7 +284,7 @@ class TestCsvConfiguration:
     def test_quoted_newlines_are_allowed(self) -> None:
         loader = _make_loader()
 
-        loader.load(source_object="reviews", gcs_uri=GCS_URI, ingestion_date=date(2017, 5, 10))
+        loader.load(source_object="reviews", gcs_uri=GCS_URI, partition_date=date(2017, 5, 10))
 
         job_config = loader._client.load_calls[-1].job_config
         assert job_config.allow_quoted_newlines is True
@@ -292,7 +292,7 @@ class TestCsvConfiguration:
     def test_quoted_newlines_allowed_for_non_review_sources_too(self) -> None:
         loader = _make_loader()
 
-        loader.load(source_object="customers", gcs_uri=GCS_URI, ingestion_date=date(2017, 5, 10))
+        loader.load(source_object="customers", gcs_uri=GCS_URI, partition_date=date(2017, 5, 10))
 
         job_config = loader._client.load_calls[-1].job_config
         assert job_config.allow_quoted_newlines is True
@@ -303,7 +303,7 @@ class TestPartitionConfiguration:
     def test_transactional_sources_use_daily_time_partitioning_no_field(self, source_object: str) -> None:
         loader = _make_loader()
 
-        loader.load(source_object=source_object, gcs_uri=GCS_URI, ingestion_date=date(2017, 5, 10))
+        loader.load(source_object=source_object, gcs_uri=GCS_URI, partition_date=date(2017, 5, 10))
 
         job_config = loader._client.load_calls[-1].job_config
         assert job_config.time_partitioning is not None
@@ -314,7 +314,7 @@ class TestPartitionConfiguration:
     def test_master_reference_sources_have_no_partitioning(self, source_object: str) -> None:
         loader = _make_loader()
 
-        loader.load(source_object=source_object, gcs_uri=GCS_URI, ingestion_date=date(2017, 5, 10))
+        loader.load(source_object=source_object, gcs_uri=GCS_URI, partition_date=date(2017, 5, 10))
 
         job_config = loader._client.load_calls[-1].job_config
         assert job_config.time_partitioning is None
@@ -324,7 +324,7 @@ class TestJobExecution:
     def test_load_table_from_uri_called_with_expected_arguments(self) -> None:
         loader = _make_loader()
 
-        loader.load(source_object="orders", gcs_uri=GCS_URI, ingestion_date=date(2017, 5, 10))
+        loader.load(source_object="orders", gcs_uri=GCS_URI, partition_date=date(2017, 5, 10))
 
         job = loader._client.load_calls[-1]
         assert job.source_uris == GCS_URI
@@ -335,7 +335,7 @@ class TestJobExecution:
     def test_job_result_is_called(self) -> None:
         loader = _make_loader()
 
-        loader.load(source_object="orders", gcs_uri=GCS_URI, ingestion_date=date(2017, 5, 10))
+        loader.load(source_object="orders", gcs_uri=GCS_URI, partition_date=date(2017, 5, 10))
 
         assert loader._client.load_calls[-1].result_called is True
 
@@ -346,13 +346,13 @@ class TestResult:
         loader._client.next_output_rows = 42
         loader._client.next_job_id = "job-abc-123"
 
-        result = loader.load(source_object="orders", gcs_uri=GCS_URI, ingestion_date=date(2017, 5, 10))
+        result = loader.load(source_object="orders", gcs_uri=GCS_URI, partition_date=date(2017, 5, 10))
 
         assert isinstance(result, BigQueryLoadResult)
         assert result.source_object == "orders"
         assert result.source_uri == GCS_URI
         assert result.destination == f"{PROJECT_ID}.{DATASET_ID}.orders$20170510"
-        assert result.ingestion_date == date(2017, 5, 10)
+        assert result.partition_date == date(2017, 5, 10)
         assert result.output_rows == 42
         assert result.job_id == "job-abc-123"
 
@@ -362,7 +362,7 @@ class TestZeroRows:
         loader = _make_loader()
         loader._client.next_output_rows = 0
 
-        result = loader.load(source_object="orders", gcs_uri=GCS_URI, ingestion_date=date(2017, 5, 10))
+        result = loader.load(source_object="orders", gcs_uri=GCS_URI, partition_date=date(2017, 5, 10))
 
         assert result.output_rows == 0
 
@@ -371,7 +371,7 @@ class TestZeroRows:
         loader._client.next_output_rows = 0
 
         # Should not raise -- a header-only delivery is a valid, successful load.
-        loader.load(source_object="reviews", gcs_uri=GCS_URI, ingestion_date=date(2017, 5, 10))
+        loader.load(source_object="reviews", gcs_uri=GCS_URI, partition_date=date(2017, 5, 10))
 
 
 class TestProviderFailures:
@@ -380,14 +380,14 @@ class TestProviderFailures:
         loader._client.next_raise_exc = gcs_exceptions.Forbidden("403 caller lacks permission")
 
         with pytest.raises(gcs_exceptions.Forbidden):
-            loader.load(source_object="orders", gcs_uri=GCS_URI, ingestion_date=date(2017, 5, 10))
+            loader.load(source_object="orders", gcs_uri=GCS_URI, partition_date=date(2017, 5, 10))
 
     def test_service_unavailable_is_not_converted_to_generic_exception(self) -> None:
         loader = _make_loader()
         loader._client.next_raise_exc = gcs_exceptions.ServiceUnavailable("503 backend unavailable")
 
         with pytest.raises(gcs_exceptions.ServiceUnavailable):
-            loader.load(source_object="orders", gcs_uri=GCS_URI, ingestion_date=date(2017, 5, 10))
+            loader.load(source_object="orders", gcs_uri=GCS_URI, partition_date=date(2017, 5, 10))
 
 
 class TestNoStorageInteraction:

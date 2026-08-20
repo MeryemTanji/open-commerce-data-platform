@@ -7,11 +7,12 @@ no knowledge of connectors, storage backends, GCS, BigQuery, Dataform,
 or orchestration. That separation is what lets a future API-based
 provider slot in later without redesigning anything downstream.
 
-``SourceDelivery`` and ``SourceDeliveryBatch`` describe only source
-delivery facts — a stable source identity, where the file currently
-lives, an optional business delivery date, and a record count. Nothing
-here encodes GCS configuration, BigQuery schemas, partitioning, or
-ingestion metadata; those belong to later stages of the pipeline.
+``SourceDelivery`` and ``SourceDeliveryBatch`` describe only source-
+delivery facts — stable source identity, where source files currently
+live, the business date represented by a delivery, when a batch becomes
+available for ingestion, and record counts. Nothing here encodes GCS
+configuration, BigQuery schemas, partitioning, or downstream ingestion
+metadata; those belong to later stages of the pipeline.
 """
 
 from __future__ import annotations
@@ -66,10 +67,28 @@ class SourceDeliveryBatch:
     condition than a delivered source containing zero business records
     -- a valid header-only daily delivery is represented by a
     ``SourceDelivery`` with ``record_count=0``, not by an empty batch.
+
+    ``delivery_date`` and ``ingestion_date`` are two distinct source-
+    delivery timing facts, not synonyms:
+
+    - ``delivery_date`` is the business/source date the batch's
+      contents represent.
+    - ``ingestion_date`` is the date on which the batch is made
+      available for ingestion -- i.e. when Mercury would actually
+      process it, which may legitimately differ from the business date
+      a provider is simulating or delivering data for.
+
+    This field says nothing about GCS object naming or
+    ``IngestionMetadata`` -- those are downstream ingestion-pipeline
+    concerns that happen to consume this value, not something this
+    module has any knowledge of. A provider that has no meaningful
+    distinction between the two (e.g. the initial/reference batch) may
+    leave ``ingestion_date`` as ``None``.
     """
 
     deliveries: tuple[SourceDelivery, ...]
     delivery_date: date | None
+    ingestion_date: date | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.deliveries, tuple):
@@ -93,6 +112,8 @@ class SourceDeliveryBatch:
 
         if self.delivery_date is not None and not isinstance(self.delivery_date, date):
             raise TypeError("delivery_date must be a datetime.date or None")
+        if self.ingestion_date is not None and not isinstance(self.ingestion_date, date):
+            raise TypeError("ingestion_date must be a datetime.date or None")
 
         mismatched = [
             delivery.source_object for delivery in self.deliveries if delivery.delivery_date != self.delivery_date

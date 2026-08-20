@@ -11,7 +11,7 @@ from __future__ import annotations
 import csv
 import dataclasses
 import hashlib
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Callable
@@ -79,14 +79,16 @@ def _write_source_files(tmp_path: Path) -> dict[str, Path]:
     }
 
 
-def _daily_batch(paths: dict[str, Path], delivery_date: date, only: set[str] | None = None) -> SourceDeliveryBatch:
+def _daily_batch(
+    paths: dict[str, Path], delivery_date: date, only: set[str] | None = None, ingestion_date: date | None = None
+) -> SourceDeliveryBatch:
     source_objects = only if only is not None else set(paths)
     deliveries = tuple(
         SourceDelivery(source_object=obj, path=paths[obj], delivery_date=delivery_date, record_count=1)
         for obj in ("orders", "order_items", "payments", "reviews")
         if obj in source_objects
     )
-    return SourceDeliveryBatch(deliveries=deliveries, delivery_date=delivery_date)
+    return SourceDeliveryBatch(deliveries=deliveries, delivery_date=delivery_date, ingestion_date=ingestion_date)
 
 
 # --- Fake BigQuery client boundary (offline, no network) -------------------
@@ -604,6 +606,7 @@ class TestDuplicateSourceDeliveryDetection:
                 SourceDelivery(source_object=source_object, path=paths[source_object], delivery_date=delivery_date, record_count=1),
             ),
             delivery_date=delivery_date,
+            ingestion_date=None,
         )
 
     def test_duplicate_required_delivery_rejected(self, tmp_path: Path) -> None:
@@ -661,6 +664,7 @@ class TestDuplicateSourceDeliveryDetection:
                 SourceDelivery(source_object="reviews", path=paths["reviews"], delivery_date=DELIVERY_DATE, record_count=1),
             ),
             delivery_date=DELIVERY_DATE,
+            ingestion_date=None,
         )
         provider = _StubSourceProvider(batch)
         executor, store = _make_executor(tmp_path, source_provider=provider)
@@ -686,6 +690,36 @@ class TestReplayStateEventSequences:
             (ReplayStatus.RUNNING, ReplayStage.WAREHOUSE),
             (ReplayStatus.SUCCESS, ReplayStage.WAREHOUSE),
         ]
+
+    def test_ingest_and_load_uses_provider_ingestion_date_for_connector_not_bigquery(self, tmp_path: Path) -> None:
+        """Proves INGEST_AND_LOAD keeps delivery_date/ingestion_date separated.
+
+        Mirrors what an Olist-backed provider actually returns for a
+        daily batch: a distinct ``ingestion_date`` (delivery_date + 1
+        day). Connector/GCS work must use that supplied ingestion_date,
+        while replay-state identity and BigQuery's ``partition_date``
+        must continue to use the plan's business ``delivery_date`` (D),
+        unchanged.
+        """
+        paths = _write_source_files(tmp_path)
+        ingestion_date = DELIVERY_DATE + timedelta(days=1)
+        provider = _StubSourceProvider(
+            _daily_batch(paths, DELIVERY_DATE, {"orders"}, ingestion_date=ingestion_date)
+        )
+        executor, store = _make_executor(tmp_path, source_provider=provider)
+        plan = _plan(_evidence(source_object="orders", logical_completion=False))
+
+        result = executor.execute_plan(plan)
+
+        orders_result = next(item for item in result.items if item.source_object == "orders")
+        assert orders_result.outcome is RecoveryExecutionOutcome.SUCCEEDED
+        # Connector/GCS landing used the provider-supplied ingestion_date.
+        assert "ingestion_date=2017-05-20" in orders_result.ingestion_result.metadata.landing_path
+        # BigQuery's partition_date is delivery_date (D), not ingestion_date.
+        assert orders_result.warehouse_result.partition_date == DELIVERY_DATE
+        assert orders_result.warehouse_result.destination.endswith("$20170519")
+        # Replay-state identity is delivery_date (D), unchanged.
+        assert all(e.delivery_date == DELIVERY_DATE for e in store.events)
 
     def test_ingestion_failure_appends_running_then_failed_ingestion(self, tmp_path: Path) -> None:
         tmp_missing = tmp_path / "missing.csv"
