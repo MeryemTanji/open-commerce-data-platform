@@ -1235,7 +1235,7 @@ Source-level recovery tracking for the initial/reference workflow is not require
 
 ---
 
-# Connector Metadata vs Replay State
+# Connector Metadata vs Replay State vs Provenance
 
 Connector metadata and replay state serve different purposes.
 
@@ -1269,11 +1269,22 @@ stage
 
 Mercury does not unnecessarily copy every connector metadata field into the replay-state table.
 
-The existing `ConnectorRunResult` remains the source of ingestion-level detail.
+Phase 3C adds a third, deliberately minimal metadata model for durable physical lineage:
+
+```text
+RawArtifactProvenance
+WarehouseLoadProvenance
+```
+
+Provenance contains only the technical facts required to link immutable Raw artifacts to warehouse loads and support reconciliation.
+
+The existing `ConnectorRunResult` remains the source of detailed ingestion execution information.
 
 Replay state provides orchestration-level visibility.
 
-These two metadata models complement rather than replace one another.
+Provenance provides durable physical lineage.
+
+These metadata models complement rather than replace one another.
 
 ---
 
@@ -1614,9 +1625,64 @@ The existing immutable artifact is loaded directly.
 
 ## RECONCILE
 
-`RECONCILE` means the available state is insufficient to determine a safe physical action automatically.
+`RECONCILE` means replay state alone is insufficient to determine whether the expected physical warehouse work already succeeded.
 
-Phase 3B does not attempt reconciliation.
+Phase 3B deliberately introduced this action as a blocked boundary rather than guessing.
+
+Phase 3C now resolves the action through provenance-backed, read-only reconciliation.
+
+The executor delegates to:
+
+```text
+RecoveryReconciler
+```
+
+which compares durable provenance with GCS object metadata and BigQuery partition metadata.
+
+If the complete evidence contract agrees, reconciliation returns:
+
+```text
+CONFIRMED
+```
+
+and `RecoveryExecutor` records the execution outcome as:
+
+```text
+SUCCEEDED
+```
+
+while appending exactly one new:
+
+```text
+SUCCESS | WAREHOUSE
+```
+
+under the current recovery run.
+
+No connector, GCS write, or BigQuery load is performed during confirmed reconciliation.
+
+If required evidence is missing or contradictory, reconciliation returns:
+
+```text
+BLOCKED
+```
+
+and performs:
+
+```text
+no connector work
+no GCS mutation
+no BigQuery load
+no replay-state append
+```
+
+Reconciliation therefore repairs only missing control-plane completion state when prior physical success can be proven. It does not repair or recreate physical data.
+
+---
+
+## MANUAL_REVIEW
+
+`MANUAL_REVIEW` represents a recovery case that cannot safely proceed automatically under the implemented recovery and reconciliation contracts.
 
 The executor returns:
 
@@ -1628,28 +1694,13 @@ and performs:
 
 ```text
 no connector work
-no GCS work
-no BigQuery work
+no GCS mutation
+no BigQuery load
+no reconciliation attempt
 no replay-state append
 ```
 
-Reconciliation belongs to Phase 3C.
-
----
-
-## MANUAL_REVIEW
-
-`MANUAL_REVIEW` represents a recovery case that cannot safely proceed automatically under the current contract.
-
-Phase 3B returns:
-
-```text
-BLOCKED
-```
-
-and performs no physical work.
-
-Manual-review workflow design belongs to Phase 3C.
+ADR-010 does not introduce an operator UI or automatic manual-review workflow. Such tooling may be added later without weakening the recovery semantics defined here.
 
 ---
 
@@ -1717,18 +1768,21 @@ planned_action
 outcome
 ingestion_result
 warehouse_result
+reconciliation_result
 ```
 
 The model prevents impossible combinations.
 
 For example:
 
-- `SKIP` cannot carry ingestion or warehouse results;
-- `RECONCILE` cannot carry physical-work results;
-- `MANUAL_REVIEW` cannot carry physical-work results;
-- `LOAD_ONLY` cannot carry an ingestion result;
+- `SKIP` cannot carry ingestion, warehouse, or reconciliation results;
+- `MANUAL_REVIEW` cannot carry physical-work or reconciliation results;
+- `LOAD_ONLY` cannot carry an ingestion or reconciliation result;
 - successful `LOAD_ONLY` must carry its warehouse result;
-- successful `INGEST_AND_LOAD` must carry the results required by that path.
+- successful `INGEST_AND_LOAD` must carry the results required by that path;
+- `RECONCILE` never carries connector or BigQuery-load results;
+- confirmed `RECONCILE` carries a `CONFIRMED` reconciliation result and produces execution outcome `SUCCEEDED`;
+- blocked `RECONCILE` carries a `BLOCKED` reconciliation result and produces execution outcome `BLOCKED`.
 
 The result deliberately contains no arbitrary free-form `detail` field.
 
@@ -1770,19 +1824,21 @@ No second ingestion-date parameter is introduced.
 
 # RecoveryExecutor
 
-Phase 3B introduces:
+Phase 3B introduces and Phase 3C extends:
 
 ```text
 RecoveryExecutor
 ```
 
-with four injected dependencies:
+with six injected dependencies:
 
 ```text
 SourceDeliveryProvider
 StorageManager
 BigQueryRawLoader
 ReplayStateStore
+ProvenanceStore
+RecoveryReconciler
 ```
 
 These are abstractions or existing platform components.
@@ -1790,9 +1846,11 @@ These are abstractions or existing platform components.
 `RecoveryExecutor` does not hard-code:
 
 - Olist-specific providers;
-- GCS-specific orchestration behavior;
+- GCS-specific reconciliation logic;
 - BigQuery replay-state persistence;
-- connector classes.
+- BigQuery provenance persistence;
+- connector classes;
+- direct GCS or BigQuery inspection calls.
 
 The high-level flow is:
 
@@ -1806,8 +1864,10 @@ fetch source deliveries only if required
 generate fresh recovery run_id
         ↓
 execute each planned source action
+        │
+        └── RECONCILE → RecoveryReconciler
         ↓
-append required replay-state transitions
+append required provenance and replay-state transitions
         ↓
 query durable completed-source state
         ↓
@@ -1815,6 +1875,8 @@ derive date completeness
         ↓
 RecoveryExecutionResult
 ```
+
+The executor coordinates reconciliation but does not implement physical inspection logic itself.
 
 ---
 
@@ -1943,7 +2005,19 @@ RUNNING | WAREHOUSE
 FAILED  | WAREHOUSE
 ```
 
-`SKIP`, `RECONCILE`, and `MANUAL_REVIEW` produce no replay-state events during Phase 3B.
+`SKIP` and `MANUAL_REVIEW` produce no replay-state events.
+
+For `RECONCILE`:
+
+```text
+BLOCKED
+    → no replay-state event
+
+CONFIRMED
+    → SUCCESS | WAREHOUSE
+```
+
+Confirmed reconciliation does not fabricate `RUNNING | WAREHOUSE` because no new warehouse operation is executed.
 
 ---
 
@@ -2172,12 +2246,14 @@ The canonical example remains:
 ```text
 BigQuery load physically succeeds
         ↓
+warehouse provenance persists
+        ↓
 SUCCESS replay-state append fails
 ```
 
-The physical warehouse state and control-plane state may now disagree.
+The physical warehouse state and control-plane state now disagree.
 
-Phase 3B does not guess.
+Phase 3B deliberately does not guess or repeat physical work.
 
 Such work is planned as:
 
@@ -2185,61 +2261,523 @@ Such work is planned as:
 RECONCILE
 ```
 
-and execution returns:
-
-```text
-BLOCKED
-```
-
-without physical work.
-
-The same principle applies to:
-
-```text
-MANUAL_REVIEW
-```
-
-cases.
+Phase 3C resolves that action only when durable provenance and current physical metadata prove the expected end-to-end result.
 
 This boundary prevents the recovery executor from turning uncertainty into destructive reprocessing.
 
 ---
 
-# Phase 3C — Reconciliation / Manual Review
+# Phase 3C — Provenance-Backed Reconciliation
 
-Phase 3C is not implemented by the current ADR-010 work.
+Phase 3C resolves `RECONCILE` cases where replay state alone is insufficient to determine whether warehouse work physically succeeded.
 
-Its purpose is to resolve recovery cases where physical state must be inspected before a safe next action can be determined.
+Mercury does not infer physical truth from replay state alone.
 
-Expected concerns include:
+Instead, reconciliation compares durable provenance with narrowly scoped physical metadata from GCS and BigQuery.
+
+Conceptually:
 
 ```text
-persisted replay state
+replay/control-plane ambiguity
+        ↓
+durable provenance
         +
-physical GCS / BigQuery evidence
+GCS object metadata
+        +
+BigQuery partition metadata
         ↓
-reconciliation
+RecoveryReconciler
         ↓
-safe resolved action
+    /       \
+CONFIRMED   BLOCKED
+    |          |
+    |          └── insufficient or conflicting evidence
+    |
+append exactly one
+SUCCESS | WAREHOUSE
+under the recovery run_id
 ```
 
-Phase 3C must preserve:
+Reconciliation is deliberately conservative.
+
+It may confirm that already-completed physical work is valid.
+
+It does not repair, overwrite, recreate, delete, or otherwise mutate physical data.
+
+---
+
+## Provenance Identity
+
+Phase 3C introduces a separate provenance identity:
+
+```text
+provenance_id
+```
+
+This is distinct from:
+
+```text
+run_id
+event_id
+delivery_date + source_object
+```
+
+The identities answer different questions:
+
+```text
+run_id
+    → which replay or recovery execution attempt?
+
+event_id
+    → which replay-state transition?
+
+delivery_date + source_object
+    → which logical source delivery?
+
+provenance_id
+    → which specific immutable Raw artifact?
+```
+
+A logical source may therefore accumulate multiple provenance records across different attempts.
+
+Both provenance histories remain available.
+
+Provenance is append-only and exists to describe physical lineage, not to replace replay state.
+
+---
+
+## RawArtifactProvenance
+
+Every successfully created immutable Raw artifact used by the incremental replay/recovery path receives durable provenance.
+
+The contract contains:
+
+```text
+provenance_id
+run_id
+delivery_date
+source_object
+ingestion_date
+gcs_uri
+checksum
+file_size_bytes
+record_count
+recorded_at
+```
+
+This captures only the evidence required to identify and later validate the artifact.
+
+It deliberately does not copy arbitrary connector metadata into the reconciliation model.
+
+The distinction remains:
+
+```text
+connector metadata
+    → detailed ingestion execution information
+
+replay state
+    → orchestration history
+
+RawArtifactProvenance
+    → immutable Raw artifact lineage
+```
+
+---
+
+## WarehouseLoadProvenance
+
+A successful physical BigQuery Raw load receives corresponding warehouse provenance.
+
+The contract contains:
+
+```text
+load_id
+provenance_id
+run_id
+delivery_date
+source_object
+destination
+partition_date
+output_rows
+job_id
+recorded_at
+```
+
+`provenance_id` links the warehouse load to the exact immutable Raw artifact from which it originated.
+
+Therefore the lineage is:
+
+```text
+logical source delivery
+        ↓
+RawArtifactProvenance
+        ↓
+provenance_id
+        ↓
+WarehouseLoadProvenance
+```
+
+This relationship allows reconciliation to compare durable historical claims with current physical metadata without guessing which artifact produced the warehouse data.
+
+---
+
+## ProvenanceStore
+
+Mercury introduces a generic:
+
+```text
+ProvenanceStore
+```
+
+abstraction.
+
+Its contract supports:
+
+```text
+append_artifact(...)
+append_warehouse_load(...)
+
+get_artifact(...)
+get_artifact_history(...)
+get_artifact_by_uri(...)
+
+get_warehouse_load_history(...)
+get_latest_warehouse_load(...)
+```
+
+The abstraction contains no BigQuery-specific persistence concepts.
+
+The initial concrete implementation is:
+
+```text
+BigQueryProvenanceStore
+```
+
+which persists provenance in the existing metadata layer.
+
+The initial tables are:
+
+```text
+metadata.raw_artifact_provenance
+metadata.warehouse_load_provenance
+```
+
+Both are partitioned by `delivery_date` and clustered by `source_object`.
+
+Provenance persistence is append-only.
+
+---
+
+## Provenance Ordering
+
+Provenance is part of Mercury's control plane and must be durable at the points where later reconciliation depends on it.
+
+For ordinary replay and recovery `INGEST_AND_LOAD`, the required ordering is:
+
+```text
+RUNNING | INGESTION
+        ↓
+connector / immutable GCS landing succeeds
+        ↓
+append RawArtifactProvenance
+        ↓
+RUNNING | WAREHOUSE
+        ↓
+BigQuery Raw load succeeds
+        ↓
+append WarehouseLoadProvenance
+        ↓
+SUCCESS | WAREHOUSE
+```
+
+This ordering ensures Mercury does not claim successful warehouse completion without durable lineage describing the physical work.
+
+A provenance append failure is therefore a control-plane failure.
+
+Mercury fails closed rather than silently continuing without evidence required for future recovery.
+
+The original technical exception remains available through exception chaining, while durable/display-safe error text continues to follow ADR-011.
+
+---
+
+## LOAD_ONLY Provenance
+
+`LOAD_ONLY` reuses an already-existing immutable Raw artifact.
+
+It therefore must not create new `RawArtifactProvenance` for that artifact.
+
+Instead:
+
+```text
+ValidatedRawArtifact
+        ↓
+resolve existing RawArtifactProvenance by URI
+        ↓
+existing provenance_id
+        ↓
+BigQuery Raw load
+        ↓
+new WarehouseLoadProvenance
+```
+
+If the supplied Raw artifact cannot be resolved to existing durable provenance, Mercury does not perform the BigQuery load.
+
+This preserves lineage rather than fabricating provenance for an artifact whose origin cannot be established.
+
+---
+
+## GCS Reconciliation Evidence
+
+Mercury does not download Raw payloads during reconciliation.
+
+The GCS inspection contract exposes only metadata required for validation.
+
+The physical object is checked for:
+
+```text
+existence
+checksum
+file size
+```
+
+The immutable landing object also carries its SHA-256 checksum as object metadata:
+
+```text
+mercury_sha256
+```
+
+The checksum is assigned before the create-only upload so the object and the metadata describing its checksum are created together.
+
+Existing create-only behavior remains unchanged.
+
+Reconciliation also checks the ingestion-date path segment already encoded in the immutable Raw URI:
+
+```text
+ingestion_date=YYYY-MM-DD
+```
+
+against `RawArtifactProvenance.ingestion_date`.
+
+This is a self-consistency check between two recorded facts.
+
+Reconciliation does not derive `delivery_date + 1 day` or any other source-specific timing rule.
+
+The Olist historical-simulation timing rule remains owned exclusively by the Olist simulated source provider.
+
+Therefore the generic reconciliation layer remains valid for future real APIs whose ingestion timing may differ.
+
+---
+
+## BigQuery Reconciliation Evidence
+
+Mercury inspects BigQuery through a narrow warehouse-inspection abstraction.
+
+The initial `BigQueryInspector` obtains partition metadata through:
+
+```text
+INFORMATION_SCHEMA.PARTITIONS
+```
+
+It does not query Raw payload rows.
+
+The reconciliation evidence is limited to the physical metadata required to validate the expected warehouse load, including:
+
+```text
+partition existence
+destination identity
+row count
+```
+
+This keeps reconciliation metadata-oriented and avoids expanding Phase 3C into data-quality validation.
+
+---
+
+## RecoveryReconciler
+
+Phase 3C introduces:
+
+```text
+RecoveryReconciler
+```
+
+The reconciler depends on abstractions for:
+
+```text
+ProvenanceStore
+RawArtifactInspector
+WarehouseInspector
+```
+
+It does not depend directly on GCS or BigQuery implementation details.
+
+The core operation is:
+
+```text
+reconcile(delivery_date, source_object)
+```
+
+Reconciliation performs no connector execution, GCS writes, BigQuery loads, deletes, overwrites, or payload downloads.
+
+Its responsibility is only to answer:
+
+> Does the available durable provenance and physical metadata provide sufficient evidence that this logical source already completed the expected warehouse work?
+
+---
+
+## Automatic Reconciliation Evidence Contract
+
+Automatic confirmation requires the evidence chain to agree.
+
+Conceptually:
+
+```text
+latest WarehouseLoadProvenance exists
+        ↓
+linked RawArtifactProvenance exists
+        ↓
+cross-record logical identity agrees
+        ↓
+GCS artifact exists
+        ↓
+GCS checksum agrees
+        ↓
+GCS file size agrees
+        ↓
+GCS URI ingestion_date agrees with provenance
+        ↓
+BigQuery partition exists
+        ↓
+BigQuery destination agrees
+        ↓
+BigQuery row count agrees
+        ↓
+artifact record_count agrees with warehouse output_rows
+        ↓
+CONFIRMED
+```
+
+Zero-record deliveries are valid.
+
+Therefore `record_count = 0`, `output_rows = 0`, and observed `row_count = 0` may reconcile successfully when every other required piece of evidence agrees.
+
+---
+
+## Reconciliation Outcomes
+
+Reconciliation produces one of two high-level outcomes:
+
+```text
+CONFIRMED
+BLOCKED
+```
+
+`CONFIRMED` means the available evidence is sufficient to establish that the expected physical warehouse work already exists and agrees with its provenance.
+
+`BLOCKED` means Mercury cannot safely establish that fact automatically.
+
+`BLOCKED` is not treated as permission to rerun or repair anything.
+
+---
+
+## BLOCKED Reasons
+
+Phase 3C uses finite structural reasons rather than arbitrary free-form infrastructure errors.
+
+The implemented blocked reasons are:
+
+```text
+NO_WAREHOUSE_LOAD_PROVENANCE
+NO_ARTIFACT_PROVENANCE
+PROVENANCE_IDENTITY_MISMATCH
+GCS_ARTIFACT_MISSING
+GCS_CHECKSUM_MISSING
+GCS_CHECKSUM_MISMATCH
+GCS_SIZE_MISMATCH
+GCS_INGESTION_DATE_MISMATCH
+BIGQUERY_PARTITION_MISSING
+BIGQUERY_DESTINATION_MISMATCH
+BIGQUERY_ROW_COUNT_MISMATCH
+```
+
+Missing, malformed, or mismatching `ingestion_date` path evidence is represented by `GCS_INGESTION_DATE_MISMATCH`.
+
+These reasons describe expected reconciliation outcomes.
+
+They are distinct from infrastructure failures.
+
+---
+
+## Reconciliation Infrastructure Failure
+
+A failure to query the provenance store, inspect GCS metadata, or inspect BigQuery metadata is not interpreted as `BLOCKED`, because Mercury does not actually possess valid evidence that reconciliation reached a normal negative conclusion.
+
+Infrastructure failures instead propagate as recovery orchestration failures.
+
+The original exception is preserved through exception chaining.
+
+Arbitrary raw exception text is not copied into durable/display-safe messages.
+
+This preserves ADR-011's operational-error boundary.
+
+---
+
+## RecoveryExecutor RECONCILE Behavior
+
+`RecoveryExecutor` delegates `RECONCILE` to `RecoveryReconciler`.
+
+If reconciliation returns `CONFIRMED`, the executor performs no physical data work.
+
+It appends exactly one new replay-state event:
+
+```text
+SUCCESS | WAREHOUSE
+```
+
+under the recovery invocation's fresh `run_id` and a fresh `event_id`.
+
+It does not fabricate `RUNNING | WAREHOUSE` because no warehouse operation was started during that recovery invocation.
+
+The event records the newly established control-plane fact that prior physical work has now been reconciled successfully.
+
+If reconciliation returns `BLOCKED`, the executor appends no replay-state event and performs no physical work.
+
+The ambiguity remains visible rather than being converted into an unsafe action.
+
+---
+
+## MANUAL_REVIEW
+
+`MANUAL_REVIEW` remains the terminal automatic boundary for states that cannot safely be reconciled under the implemented evidence contract.
+
+It continues to return `BLOCKED` and performs no connector work, GCS mutation, BigQuery load, reconciliation attempt, or replay-state append.
+
+ADR-010 does not introduce an operator UI or automatic manual-review workflow.
+
+---
+
+## Reconciliation Safety Properties
+
+Phase 3C preserves all earlier ADR-010 guarantees:
 
 - append-only replay history;
-- Raw immutability;
-- ADR-011 operational-error safety;
+- append-only provenance;
+- immutable Raw landing;
 - source independence;
 - monotonic completion;
-- no destructive guessing.
+- ADR-011-safe operational errors;
+- no payload downloads for reconciliation;
+- no destructive physical repair;
+- no automatic overwrite;
+- no inference from incomplete evidence;
+- no source-specific timing rules in generic recovery components.
 
-Until Phase 3C is explicitly designed and implemented:
+The governing reconciliation rule is:
 
-```text
-RECONCILE
-MANUAL_REVIEW
-```
+> Mercury may automatically confirm physical work only when the complete required evidence chain agrees.
 
-remain blocked execution outcomes.
+Otherwise:
+
+> Block rather than guess.
 
 ---
 
@@ -2262,40 +2800,54 @@ Automatic retry strategy may be introduced separately after these semantics are 
 
 # Recovery Scope
 
-ADR-010 now establishes both the operational state and the implemented planning/execution architecture required for targeted source recovery.
+ADR-010 establishes the operational state, planning, execution, provenance, and reconciliation architecture required for targeted source recovery.
 
 The implemented recovery model is:
 
 ```text
-inspect replay history and evidence
+inspect replay history and recovery evidence
         ↓
 RecoveryPlanner
         ↓
 RecoveryPlan
         ↓
-validate complete execution request
-        ↓
 RecoveryExecutor
         ↓
-perform only safe required work
+    planned action
         ↓
-append new events under fresh run_id
+┌─────────────────────────────────────┐
+│ SKIP                                │
+│ INGEST_AND_LOAD                     │
+│ LOAD_ONLY                           │
+│ RECONCILE → RecoveryReconciler      │
+│ MANUAL_REVIEW → BLOCKED             │
+└─────────────────────────────────────┘
+        ↓
+append required durable metadata
         ↓
 derive completion from durable history
 ```
 
-The current automatic execution boundary is:
+The automatic boundary is:
 
 ```text
-unambiguous safe work
+unambiguous safe physical work
         → execute
 
-ambiguous physical/control-plane state
+ambiguous state with sufficient
+reconciliation evidence
+        → confirm
+
+insufficient/conflicting evidence
         → BLOCKED
-        → Phase 3C
+
+manual-review-only state
+        → BLOCKED
 ```
 
 Recovery does not unnecessarily rerun already successful independent sources.
+
+Reconciliation does not repair physical data. It only determines whether sufficient evidence exists to confirm physical work that replay state alone could not establish.
 
 ---
 
@@ -2331,10 +2883,12 @@ RecoveryPlanner
 RecoveryPlan
         ↓
 RecoveryExecutor
-       /   \
-      /     \
-SourceDeliveryProvider
-ReplayStateStore
+   /      |       \
+  /       |        \
+Provider  Replay   Provenance
+         State      Store
+            \
+             RecoveryReconciler
 ```
 
 Provider implementations remain independent of replay-state persistence.
@@ -2410,14 +2964,15 @@ expected-source validation
 ingestion-phase execution
 warehouse eligibility
 warehouse-phase execution
+Raw/warehouse provenance recording
 state transition recording
 date-completeness derivation
 range progression/stopping
 ```
 
-It depends on the generic `ReplayStateStore`.
+It depends on the generic `ReplayStateStore` and `ProvenanceStore`.
 
-It does not perform targeted recovery planning.
+It does not perform targeted recovery planning or reconciliation.
 
 ---
 
@@ -2455,7 +3010,9 @@ Responsible for:
 validate recovery execution request
 obtain source deliveries when required
 execute safe planned actions
+persist required provenance
 append recovery state transitions
+delegate RECONCILE to RecoveryReconciler
 isolate ordinary source failures
 fail closed on control-plane failures
 derive post-recovery date completeness
@@ -2465,12 +3022,84 @@ Not responsible for:
 
 - deciding recovery policy;
 - inventing recovery actions;
-- reconciling ambiguous physical state;
+- direct GCS/BigQuery inspection logic;
 - destructive Raw recovery.
 
-The executor executes the plan.
+The executor executes the plan and coordinates reconciliation.
 
 It does not reinterpret the plan.
+
+---
+
+## ProvenanceStore
+
+Responsible for:
+
+```text
+durable append-only Raw artifact lineage
+durable append-only warehouse-load lineage
+artifact provenance retrieval
+warehouse-load provenance retrieval
+```
+
+It does not:
+
+- perform ingestion;
+- inspect physical infrastructure;
+- decide recovery actions;
+- execute reconciliation policy.
+
+---
+
+## RawArtifactInspector
+
+Responsible for:
+
+```text
+read-only inspection of Raw artifact metadata required by reconciliation
+```
+
+The GCS-backed implementation inspects object existence, checksum metadata, and object size.
+
+It does not download or mutate Raw payloads.
+
+---
+
+## WarehouseInspector
+
+Responsible for:
+
+```text
+read-only inspection of warehouse metadata required by reconciliation
+```
+
+The BigQuery-backed implementation inspects partition metadata without reading Raw payload rows.
+
+---
+
+## RecoveryReconciler
+
+Responsible for:
+
+```text
+resolve provenance lineage
+compare provenance with physical metadata
+apply the automatic-confirmation evidence contract
+return CONFIRMED or BLOCKED
+```
+
+Not responsible for:
+
+- connector execution;
+- GCS writes;
+- BigQuery loads;
+- destructive repair;
+- recovery planning;
+- source-specific ingestion-date derivation.
+
+The reconciler establishes evidence.
+
+It does not repair data.
 
 ---
 
@@ -2735,7 +3364,7 @@ The architecture supports future API-based independent sources.
 
 Recovery decisions are separated from recovery side effects.
 
-Safe targeted recovery is now executable.
+Safe targeted recovery is executable.
 
 Existing immutable Raw artifacts can be reused through `LOAD_ONLY`.
 
@@ -2745,9 +3374,19 @@ Ordinary source failures remain isolated.
 
 Control-plane persistence failures fail closed.
 
-Ambiguous reconciliation cases are blocked instead of guessed.
+Durable provenance now links immutable Raw artifacts to warehouse loads.
 
-ADR-011 error-safety guarantees extend through recovery execution.
+Ambiguous physical/control-plane state can be automatically confirmed when the complete reconciliation evidence contract agrees.
+
+Reconciliation requires no Raw payload downloads.
+
+Reconciliation remains read-only with respect to physical data.
+
+`LOAD_ONLY` preserves lineage by linking new warehouse-load provenance to existing Raw artifact provenance.
+
+Source-specific ingestion timing remains outside generic recovery infrastructure.
+
+ADR-011 error-safety guarantees extend through recovery, provenance persistence, and reconciliation.
 
 Raw immutability remains intact.
 
@@ -2763,17 +3402,21 @@ Downstream consumers cannot assume that one available source means the full date
 
 Replay-state persistence is part of the control plane and therefore another dependency that can itself fail.
 
+Provenance persistence introduces additional control-plane metadata and another dependency that can fail.
+
 Recovery requires stage-aware planning.
 
 Recovery execution requires careful preflight validation.
 
-The append-only state table grows with each transition and recovery attempt.
+The append-only replay-state and provenance tables grow with replay and recovery activity.
 
-Current-state diagnostics and logical completion require different queries/interpretations.
+Current-state diagnostics, logical completion, physical lineage, and reconciliation require different queries/interpretations.
 
-Reconciliation remains a separate future implementation problem.
+Reconciliation introduces additional read-only GCS and BigQuery metadata-inspection dependencies.
 
-Operational tooling will eventually be needed to make replay and recovery status easy to inspect.
+Automatic reconciliation is intentionally conservative, so conflicting or incomplete evidence still requires manual review.
+
+Operational tooling will eventually be needed to make replay, provenance, reconciliation, and recovery status easy to inspect.
 
 ---
 
@@ -2860,6 +3503,46 @@ At Phase 3B completion, the full test suite contains:
 0 failed
 ```
 
+## Phase 3C — Provenance-Backed Reconciliation
+
+64. Successful immutable Raw landing is represented by durable `RawArtifactProvenance`.
+65. Successful BigQuery Raw loading is represented by durable `WarehouseLoadProvenance`.
+66. Warehouse provenance links to the exact Raw artifact through `provenance_id`.
+67. Provenance persistence is append-only.
+68. Ordinary replay persists Raw artifact provenance before warehouse execution begins.
+69. Ordinary replay persists warehouse-load provenance before `SUCCESS | WAREHOUSE`.
+70. Recovery `INGEST_AND_LOAD` preserves the same provenance ordering.
+71. `LOAD_ONLY` resolves and reuses existing Raw artifact provenance rather than fabricating new artifact provenance.
+72. Missing `LOAD_ONLY` provenance prevents BigQuery execution.
+73. Immutable GCS objects expose SHA-256 checksum metadata required for reconciliation.
+74. Reconciliation does not download Raw payloads.
+75. GCS existence, checksum, and size are validated against durable provenance.
+76. The `ingestion_date` encoded in the GCS URI is validated against recorded artifact provenance.
+77. Generic reconciliation does not derive an Olist-specific `delivery_date + 1 day` rule.
+78. BigQuery reconciliation uses metadata inspection rather than Raw payload queries.
+79. BigQuery partition existence, destination, and row count are validated.
+80. Artifact record count agrees with warehouse output rows for automatic confirmation.
+81. Zero-record deliveries may reconcile successfully.
+82. Missing or conflicting required evidence produces a finite `BLOCKED` reason.
+83. Reconciliation performs no connector work, GCS writes, or BigQuery loads.
+84. Confirmed reconciliation appends exactly one `SUCCESS | WAREHOUSE` event under the recovery run.
+85. Confirmed reconciliation does not fabricate `RUNNING | WAREHOUSE`.
+86. Blocked reconciliation appends no replay-state event.
+87. Reconciliation infrastructure failures are not silently converted to `BLOCKED`.
+88. Reconciliation infrastructure failures preserve their original technical cause through exception chaining.
+89. Durable/display-safe Phase 3C errors comply with ADR-011.
+90. `MANUAL_REVIEW` remains blocked and performs no physical work.
+91. Raw immutability remains unchanged.
+92. Initial/reference loads remain outside ADR-010 provenance/recovery scope.
+93. The full automated suite remains green.
+
+At Phase 3C completion, the full test suite contains:
+
+```text
+1251 passed
+0 failed
+```
+
 ---
 
 # Non-Goals
@@ -2878,16 +3561,18 @@ ADR-010 does not introduce:
 - alerting;
 - downstream dependency graphs;
 - Dataform transformations;
-- automatic Raw schema evolution.
+- automatic Raw schema evolution;
+- destructive reconciliation or automatic physical-state repair;
+- automatic GCS overwrite or deletion;
+- automatic BigQuery destructive conflict resolution;
+- Raw payload downloads for reconciliation;
+- data-quality reconciliation beyond the required provenance/physical metadata contract;
+- an operator UI for manual review;
+- automatic manual-review workflow execution;
+- source-specific ingestion timing rules inside generic reconciliation infrastructure;
+- provenance/recovery tracking for the initial/reference one-time load path.
 
-Phase 3B additionally does not introduce:
-
-- automatic reconciliation;
-- automatic physical-state repair;
-- destructive conflict resolution;
-- automatic manual-review workflow execution.
-
-These concerns may be introduced separately.
+These concerns may be introduced separately if future requirements justify them.
 
 ---
 
@@ -2989,6 +3674,7 @@ LOAD_ONLY
 RECONCILE
 MANUAL_REVIEW
 ```
+
 ### Recovery Decision Matrix
 
 `RecoveryPlanner` determines the minimum safe recovery action from three pieces of evidence:
@@ -3063,34 +3749,71 @@ The completed implementation is validated by:
 
 ---
 
-### Phase 3C — Reconciliation / Manual Review ⏳
+### Phase 3C — Provenance-Backed Reconciliation ✅
 
-Not yet implemented.
-
-Phase 3C will address cases where replay metadata alone cannot safely determine the physical truth.
-
-Conceptually:
+Implemented:
 
 ```text
-RECONCILE / MANUAL_REVIEW
-        ↓
-inspect durable control-plane state
+RawArtifactProvenance
+WarehouseLoadProvenance
+ProvenanceStore
+BigQueryProvenanceStore
+
+RawArtifactObservation
+RawArtifactInspector
+GCSArtifactInspector
+
+WarehousePartitionObservation
+WarehouseInspector
+BigQueryInspector
+
+ReconciliationOutcome
+ReconciliationReason
+ReconciliationResult
+RecoveryReconciler
+```
+
+Phase 3C answers:
+
+```text
+When replay state is ambiguous, can existing physical work
+be safely confirmed from durable evidence?
+```
+
+The implemented evidence chain uses:
+
+```text
+durable provenance
         +
-inspect relevant physical state
+GCS object metadata
+        +
+BigQuery partition metadata
         ↓
-determine safe resolution
+RecoveryReconciler
         ↓
-append auditable outcome
+CONFIRMED / BLOCKED
 ```
 
-Until Phase 3C is explicitly designed and implemented:
+`CONFIRMED` reconciliation performs no physical data work and allows `RecoveryExecutor` to append exactly one:
 
 ```text
-RECONCILE
-MANUAL_REVIEW
+SUCCESS | WAREHOUSE
 ```
 
-remain blocked and perform no physical work.
+under the fresh recovery `run_id`.
+
+`BLOCKED` reconciliation performs no physical work and appends no replay-state event.
+
+`MANUAL_REVIEW` remains the boundary for cases that cannot safely be resolved automatically.
+
+Phase 3C preserves Raw immutability, append-only history, source independence, monotonic completion, and ADR-011-safe operational errors.
+
+The completed ADR-010 implementation is validated by:
+
+```text
+1251 automated tests passing
+0 failed
+```
 
 ---
 
@@ -3128,7 +3851,7 @@ Successful completion is monotonic: a later failed re-attempt does not erase an 
 
 An incomplete date stops automatic progression to later historical dates after all safe work for the current date has been attempted.
 
-Replay state is stored as operational metadata outside the Raw layer.
+Replay state and provenance are stored as operational metadata outside the Raw layer.
 
 Existing immutable GCS behavior is preserved.
 
@@ -3137,30 +3860,61 @@ Targeted recovery is split into:
 ```text
 RecoveryPlanner
         ↓
-decide
-
+decide minimum safe action
+        ↓
 RecoveryExecutor
         ↓
-execute safe work
-
-Reconciliation
-        ↓
-resolve ambiguity
+execute safe physical work
+        │
+        └── RECONCILE
+                ↓
+        RecoveryReconciler
+                ↓
+        validate durable provenance
+        against physical metadata
 ```
 
 `RecoveryPlanner` decides what work is appropriate without side effects.
 
-`RecoveryExecutor` executes only safe, explicit actions.
+`RecoveryExecutor` executes explicit safe actions and coordinates reconciliation when requested by the plan.
 
-`LOAD_ONLY` reuses an explicitly validated immutable Raw artifact without downloading, copying, or rewriting it.
+`LOAD_ONLY` reuses an explicitly validated immutable Raw artifact without downloading, copying, or rewriting it and preserves lineage through existing artifact provenance.
+
+Phase 3C adds append-only provenance linking immutable Raw artifacts to their warehouse loads.
+
+`RecoveryReconciler` compares that provenance with narrowly scoped GCS and BigQuery metadata.
+
+When the complete evidence chain agrees, reconciliation is:
+
+```text
+CONFIRMED
+```
+
+and Mercury appends exactly one new:
+
+```text
+SUCCESS | WAREHOUSE
+```
+
+under the recovery invocation without repeating physical work.
+
+When evidence is missing or conflicting, reconciliation is:
+
+```text
+BLOCKED
+```
+
+and Mercury performs no physical repair or replay-state append.
+
+`MANUAL_REVIEW` remains the conservative boundary for cases outside the automatic reconciliation contract.
 
 Ordinary source failures remain isolated.
 
 Control-plane persistence failures fail closed.
 
-Recovery errors comply with ADR-011 and do not expose arbitrary raw exception text.
+Replay, recovery, provenance, and reconciliation errors comply with ADR-011 and do not expose arbitrary raw exception text.
 
-Ambiguous `RECONCILE` and `MANUAL_REVIEW` work remains blocked until Phase 3C defines the reconciliation contract.
+Raw immutability remains unchanged.
 
 The governing principles are:
 
@@ -3174,6 +3928,10 @@ The governing principles are:
 
 > Recover only the work that requires recovery while preserving immutable successful work.
 
+> Reconcile from durable evidence, not assumptions.
+
+> Confirm existing physical work only when the complete required evidence chain agrees.
+
 > Never turn uncertainty into destructive reprocessing.
 
-> Successful completion is durable historical truth and is not revoked by a later failed re-attempt.
+With Phases 1, 2, 3A, 3B, and 3C implemented, ADR-010's incremental historical replay and targeted recovery architecture is complete.

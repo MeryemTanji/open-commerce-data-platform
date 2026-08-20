@@ -120,6 +120,7 @@ Each completed milestone represents a meaningful addition to the platform.
 - [x] Implement atomic create-only uploads
 - [x] Validate GCS SHA-256 integrity
 - [x] Validate duplicate protection
+- [x] Persist SHA-256 checksum metadata on immutable Raw objects
 
 ## Source Delivery
 
@@ -211,7 +212,7 @@ Each completed milestone represents a meaningful addition to the platform.
 - [x] Select `SKIP` when no recovery work is required
 - [x] Select `INGEST_AND_LOAD` when source ingestion must be repeated
 - [x] Select `LOAD_ONLY` when a validated immutable Raw artifact can be reused
-- [x] Select `RECONCILE` when physical and control-plane state cannot be safely resolved automatically
+- [x] Select `RECONCILE` when physical and control-plane state requires reconciliation
 - [x] Select `MANUAL_REVIEW` when recovery evidence is insufficient or ambiguous
 - [x] Keep recovery planning pure and free of physical side effects
 
@@ -227,8 +228,6 @@ Each completed milestone represents a meaningful addition to the platform.
 - [x] Execute `SKIP` with zero physical work
 - [x] Execute `INGEST_AND_LOAD` through connector ingestion followed by BigQuery Raw loading
 - [x] Execute `LOAD_ONLY` directly from an explicitly validated immutable `gs://` Raw artifact
-- [x] Keep `RECONCILE` blocked pending Phase 3C
-- [x] Keep `MANUAL_REVIEW` blocked pending Phase 3C
 - [x] Validate recovery requests before physical side effects
 - [x] Fetch required source deliveries lazily and only once per recovery execution
 - [x] Detect missing and duplicate required source deliveries safely
@@ -243,50 +242,88 @@ Each completed milestone represents a meaningful addition to the platform.
 - [x] Re-derive date completeness after recovery
 - [x] Preserve monotonic logical completion across later failed recovery attempts
 - [x] Keep Phase 3A recovery planning unchanged
-- [x] Keep Phase 3C reconciliation explicitly out of scope
+- [x] Establish explicit reconciliation boundary for ambiguous recovery state
 - [x] Complete Phase 3B automated regression suite — 1084 tests passing
 
-#### Phase 3C — Reconciliation & Manual Review
+#### Phase 3C — Provenance-Backed Reconciliation
 
-- [ ] Define reconciliation semantics for ambiguous physical/control-plane state
-- [ ] Define evidence requirements for automatic reconciliation
-- [ ] Define safe handling of `RECONCILE` recovery actions
-- [ ] Define operational workflow for `MANUAL_REVIEW`
-- [ ] Preserve immutable Raw and append-only replay-state guarantees during reconciliation
-- [ ] Re-evaluate date completeness after reconciliation
-- [ ] Validate reconciliation behavior with automated tests
-- [ ] Validate targeted recovery and reconciliation against real GCP
+- [x] Define reconciliation semantics for ambiguous physical/control-plane state
+- [x] Define evidence requirements for automatic reconciliation
+- [x] Introduce `RawArtifactProvenance`
+- [x] Introduce `WarehouseLoadProvenance`
+- [x] Introduce `ProvenanceStore`
+- [x] Implement `BigQueryProvenanceStore`
+- [x] Persist append-only Raw artifact provenance
+- [x] Persist append-only warehouse-load provenance
+- [x] Link warehouse loads to exact immutable Raw artifacts through `provenance_id`
+- [x] Integrate provenance persistence with historical replay
+- [x] Integrate provenance persistence with targeted recovery
+- [x] Resolve `LOAD_ONLY` artifacts to existing durable Raw provenance
+- [x] Prevent `LOAD_ONLY` execution when required provenance is unavailable
+- [x] Introduce `RawArtifactInspector`
+- [x] Implement `GCSArtifactInspector`
+- [x] Inspect Raw artifacts without downloading payloads
+- [x] Validate GCS object existence against provenance
+- [x] Validate GCS SHA-256 checksum metadata against provenance
+- [x] Validate GCS object size against provenance
+- [x] Validate GCS URI `ingestion_date` against artifact provenance
+- [x] Keep generic reconciliation independent of Olist `delivery_date + 1` timing semantics
+- [x] Introduce `WarehouseInspector`
+- [x] Implement `BigQueryInspector`
+- [x] Inspect BigQuery partition metadata through `INFORMATION_SCHEMA.PARTITIONS`
+- [x] Validate BigQuery partition existence
+- [x] Validate BigQuery destination identity
+- [x] Validate BigQuery row count against provenance
+- [x] Support valid zero-record reconciliation
+- [x] Introduce `ReconciliationOutcome`
+- [x] Introduce finite `ReconciliationReason` values
+- [x] Introduce `ReconciliationResult`
+- [x] Implement `RecoveryReconciler`
+- [x] Return `CONFIRMED` only when the complete provenance and physical-evidence chain agrees
+- [x] Return structural `BLOCKED` outcomes for missing or conflicting evidence
+- [x] Keep reconciliation infrastructure failures distinct from normal `BLOCKED` outcomes
+- [x] Execute `RECONCILE` through `RecoveryReconciler`
+- [x] Append exactly one `SUCCESS | WAREHOUSE` event after confirmed reconciliation
+- [x] Perform zero connector, GCS-write, or BigQuery-load work during confirmed reconciliation
+- [x] Append no replay-state event for blocked reconciliation
+- [x] Keep `MANUAL_REVIEW` safely blocked
+- [x] Preserve immutable Raw and append-only replay/provenance guarantees
+- [x] Preserve ADR-011-safe error handling in provenance persistence and reconciliation
+- [x] Re-evaluate date completeness after reconciliation
+- [x] Validate reconciliation behavior with automated tests
+- [x] Complete ADR-010 Phase 3C regression suite
+- [x] Complete full ingestion regression suite — 1251 tests passing
 
 ### ADR-011 — Data Security, Privacy, and Data-Leak Prevention
 
-  - [x] Complete security audit of Mercury's persistence, logging, exception, storage, orchestration, and cloud boundaries.
-  - [x] Identify and document potential sensitive-data leakage paths.
-  - [x] Introduce the safe `OperationalError` contract for persisted operational failures.
-  - [x] Remove raw exception text from connector and historical replay persisted failure state.
-  - [x] Preserve exception chaining for transient in-process debugging without persisting provider exception content.
-  - [x] Add regression tests proving sensitive exception content cannot reach persisted operational metadata.
-  - [x] Inspect GCS Raw bucket security configuration and IAM.
-  - [x] Confirm Public Access Prevention is enforced on the Raw bucket.
-  - [x] Confirm Uniform Bucket-Level Access is enabled on the Raw bucket.
-  - [x] Create the dedicated `mercury-runtime` service account.
-  - [x] Grant runtime only the GCS object-creation capability required for Raw ingestion.
-  - [x] Grant runtime BigQuery job execution capability.
-  - [x] Grant explicit runtime access to the existing `raw` and `metadata` datasets.
-  - [x] Validate that runtime can create new Raw GCS objects.
-  - [x] Validate Raw object immutability using create-only generation preconditions.
-  - [x] Validate that runtime cannot delete Raw GCS objects.
-  - [x] Validate that runtime cannot broadly list project buckets.
-  - [x] Validate that runtime can submit BigQuery jobs.
-  - [x] Validate that runtime can write to the existing `raw` dataset.
-  - [x] Validate that runtime can write to and query the existing `metadata` dataset.
-  - [x] Validate that runtime cannot create arbitrary BigQuery datasets.
-  - [x] Validate `BigQueryReplayStateStore.ensure_resources()` under the restricted runtime identity.
-  - [x] Remove broad `projectReaders`, `projectWriters`, and `projectOwners` access from `raw`.
-  - [x] Remove broad `projectReaders`, `projectWriters`, and `projectOwners` access from `metadata`.
-  - [x] Re-test legitimate runtime operations after dataset ACL hardening.
-  - [x] Establish a human/infrastructure provisioning boundary separate from Mercury runtime execution.
-  - [x] Validate a keyless runtime model using short-lived service-account impersonation rather than downloaded service-account keys.
-  - [x] Document the security audit and infrastructure validation under `docs/security/`.
+- [x] Complete security audit of Mercury's persistence, logging, exception, storage, orchestration, and cloud boundaries
+- [x] Identify and document potential sensitive-data leakage paths
+- [x] Introduce the safe `OperationalError` contract for persisted operational failures
+- [x] Remove raw exception text from connector and historical replay persisted failure state
+- [x] Preserve exception chaining for transient in-process debugging without persisting provider exception content
+- [x] Add regression tests proving sensitive exception content cannot reach persisted operational metadata
+- [x] Inspect GCS Raw bucket security configuration and IAM
+- [x] Confirm Public Access Prevention is enforced on the Raw bucket
+- [x] Confirm Uniform Bucket-Level Access is enabled on the Raw bucket
+- [x] Create the dedicated `mercury-runtime` service account
+- [x] Grant runtime only the GCS object-creation capability required for Raw ingestion
+- [x] Grant runtime BigQuery job execution capability
+- [x] Grant explicit runtime access to the existing `raw` and `metadata` datasets
+- [x] Validate that runtime can create new Raw GCS objects
+- [x] Validate Raw object immutability using create-only generation preconditions
+- [x] Validate that runtime cannot delete Raw GCS objects
+- [x] Validate that runtime cannot broadly list project buckets
+- [x] Validate that runtime can submit BigQuery jobs
+- [x] Validate that runtime can write to the existing `raw` dataset
+- [x] Validate that runtime can write to and query the existing `metadata` dataset
+- [x] Validate that runtime cannot create arbitrary BigQuery datasets
+- [x] Validate `BigQueryReplayStateStore.ensure_resources()` under the restricted runtime identity
+- [x] Remove broad `projectReaders`, `projectWriters`, and `projectOwners` access from `raw`
+- [x] Remove broad `projectReaders`, `projectWriters`, and `projectOwners` access from `metadata`
+- [x] Re-test legitimate runtime operations after dataset ACL hardening
+- [x] Establish a human/infrastructure provisioning boundary separate from Mercury runtime execution
+- [x] Validate a keyless runtime model using short-lived service-account impersonation rather than downloaded service-account keys
+- [x] Document the security audit and infrastructure validation under `docs/security/`
 
 ---
 
@@ -443,11 +480,11 @@ Mercury has a reusable, tested eight-source ingestion framework with shared CSV 
 
 ## Sprint 2 — Cloud Raw Platform & Historical Replay
 
-🟡 In progress
+✅ Complete
 
 Completed:
 
-- Cloud Storage Raw landing
+- Cloud Storage immutable Raw landing
 - BigQuery Raw loading
 - initial and incremental source simulation
 - historical replay orchestration
@@ -456,7 +493,7 @@ Completed:
 - ADR-010 Phase 2 stateful replay integration
 - source-level failure isolation within a business date
 - latest-attempt vs monotonic logical-completion semantics
-- real GCP validation of successful, reattempt and partial-failure replay scenarios
+- real GCP validation of successful, reattempt, and partial-failure replay scenarios
 - ADR-011 security audit and safe operational-error contract
 - ADR-011 least-privilege GCS and BigQuery runtime boundary
 - ADR-010 Phase 3A stage-aware recovery planning
@@ -465,14 +502,89 @@ Completed:
 - recovery-state persistence under fresh recovery `run_id` values
 - source-level failure isolation during recovery
 - monotonic date-completion re-derivation after recovery
-- complete automated regression suite — 1084 tests passing
+- ADR-010 Phase 3C provenance-backed reconciliation
+- append-only Raw artifact and warehouse-load provenance
+- provenance-linked `LOAD_ONLY` recovery
+- read-only GCS artifact inspection
+- read-only BigQuery partition inspection
+- provenance-to-physical-state consistency validation
+- safe confirmation of ambiguous physical/control-plane state
+- finite structural reconciliation reasons
+- zero-physical-work confirmed reconciliation
+- conservative blocking of conflicting or insufficient reconciliation evidence
+- ADR-011-safe provenance persistence and reconciliation errors
+- complete automated ingestion regression suite — 1251 tests passing
 
-Current focus:
+### Ingestion Milestone
 
-- ADR-010 Phase 3C reconciliation and manual-review handling
-- reconciliation of physical Raw data with control-plane state
-- safe resolution of ambiguous recovery evidence
-- real GCP validation of the completed targeted-recovery workflow
+Mercury's ingestion layer is now functionally complete for the current platform scope.
+
+The completed ingestion architecture supports:
+
+```text
+Historical / Simulated Source Delivery
+                ↓
+        SourceDeliveryProvider
+                ↓
+        HistoricalReplayRunner
+                ↓
+        Reusable Connectors
+                ↓
+        Immutable GCS Raw
+                ↓
+          BigQuery Raw
+```
+
+with a durable control plane for:
+
+```text
+Replay State
+    +
+Raw Artifact Provenance
+    +
+Warehouse Load Provenance
+    +
+Targeted Recovery
+    +
+Provenance-Backed Reconciliation
+```
+
+The ingestion layer now provides:
+
+```text
+source-faithful Raw ingestion
+immutable cloud storage
+transactional Raw warehouse loading
+historical replay
+partial source availability
+append-only replay history
+monotonic logical completion
+stage-aware targeted recovery
+immutable Raw artifact reuse
+physical lineage
+read-only reconciliation
+safe ambiguity handling
+least-privilege cloud execution
+safe operational-error persistence
+```
+
+The next major engineering phase moves above Raw ingestion into the analytics-engineering layer.
+
+### Next Focus
+
+```text
+Sprint 3 — Analytics Engineering
+        ↓
+BigQuery Raw
+        ↓
+Dataform
+        ↓
+Staging
+        ↓
+Canonical Model
+        ↓
+Data Quality
+```
 
 ---
 
@@ -716,7 +828,7 @@ Verified:
 - [x] Enforce single-date input for completeness evaluation
 - [x] Complete Phase 1 automated regression suite — 847 tests passing
 
-### ADR-010 Phase 2 — Design & Working Implementation
+### ADR-010 Phase 2 — Initial Design Checkpoint
 
 - [x] Define `run_id` semantics
 - [x] Define source-level partial-success execution model
@@ -725,9 +837,7 @@ Verified:
 - [x] Separate source availability from date completeness
 - [x] Define incomplete-date range stopping semantics
 - [x] Produce initial Phase 2 implementation and automated tests
-- [ ] Revise latest-attempt vs logical-completion semantics
-- [ ] Establish stable Phase 2 implementation checkpoint
-- [ ] Validate Phase 2 against real GCP
+- [x] Identify latest-attempt vs logical-completion distinction for revision
 
 **Important checkpoint:** The initial Phase 2 implementation exposed an important recovery-state distinction before production validation:
 
@@ -739,11 +849,11 @@ logical source completion state
 
 Under Mercury's immutable historical delivery model, an earlier successful warehouse materialisation must not become logically incomplete merely because a later replay attempt fails.
 
-This semantic revision will be completed before ADR-010 Phase 2 is treated as stable.
+This distinction was resolved and validated during Day 10 before Phase 2 was treated as complete.
 
 ### Day 9 Outcome
 
-Mercury now has a validated end-to-end cloud Raw path:
+Mercury established a validated end-to-end cloud Raw path:
 
 ```text
 Historical Source Delivery
@@ -759,11 +869,9 @@ Immutable GCS Raw
 BigQuery Raw
 ```
 
-Both incremental historical replay and one-off reference loading have been validated against real Google Cloud infrastructure.
+Both incremental historical replay and one-off reference loading were validated against real Google Cloud infrastructure.
 
-The platform also has the first durable control-plane foundation for source-level replay history and future targeted recovery.
-
-The next engineering checkpoint is to finalise ADR-010 Phase 2's distinction between replay-attempt state and logical source completion before implementing automatic recovery.
+The platform also established the first durable control-plane foundation for source-level replay history and future targeted recovery.
 
 ## Day 10 — Historical Replay State & Failure Isolation
 
@@ -831,50 +939,38 @@ The next engineering checkpoint is to finalise ADR-010 Phase 2's distinction bet
 - [x] Clean local simulator, GCS Raw, BigQuery Raw, and replay-state test data after integration validation
 - [x] Preserve empty BigQuery Raw table structures for future full historical replay
 
-**Outcome:** ADR-010 Phase 2 is implemented and validated. Mercury now maintains durable, append-only source-level replay state while treating each business date as a completeness boundary containing independent source deliveries. Source failures no longer discard or block safe sibling work: successfully ingested sources continue to BigQuery Raw and remain available even when another source fails. Latest-attempt state is deliberately distinct from monotonic logical completion, allowing operational failures to remain visible without incorrectly invalidating data that was successfully materialised by an earlier run. An incomplete date stops progression to later dates only after all safe work for that date has been attempted. Targeted recovery execution remains Phase 3 of ADR-010.
+**Outcome:** ADR-010 Phase 2 is implemented and validated. Mercury maintains durable, append-only source-level replay state while treating each business date as a completeness boundary containing independent source deliveries. Source failures do not discard or block safe sibling work. Latest-attempt state remains deliberately distinct from monotonic logical completion.
 
-## Day 11 - Data Security, Privacy, and Data-Leak Prevention
+## Day 11 — Data Security, Privacy, and Data-Leak Prevention
 
-ADR-011 was introduced before continuing targeted recovery execution to ensure
-Mercury's operational and infrastructure boundaries are safe for customer data.
+ADR-011 was introduced before continuing targeted recovery execution to ensure Mercury's operational and infrastructure boundaries are safe for customer data.
 
-Completed:
+### Phase 1 — Security Audit
 
-- **Phase 1 — Security Audit**
-  - Audited persistence, logging, exception, storage, orchestration, and cloud
-    boundaries for potential data leakage.
-  - Identified unsafe propagation of raw exception text into persisted
-    operational metadata.
+- [x] Audit persistence, logging, exception, storage, orchestration, and cloud boundaries for potential data leakage
+- [x] Identify unsafe propagation of raw exception text into persisted operational metadata
 
-- **Phase 2 — Safe Operational Errors**
-  - Introduced Mercury-authored `OperationalError` values.
-  - Removed persistence of raw exception text from connector and replay failure
-    paths.
-  - Preserved exception chaining for transient debugging.
-  - Added security regression tests preventing sensitive exception content from
-    reaching persisted operational state.
+### Phase 2 — Safe Operational Errors
 
-- **Phase 3 — Infrastructure Security and Least Privilege**
-  - Introduced a dedicated `mercury-runtime` service account.
-  - Applied least-privilege GCS and BigQuery permissions.
-  - Validated immutable Raw object creation and denied runtime deletion.
-  - Confirmed runtime cannot create arbitrary BigQuery datasets.
-  - Removed broad BigQuery `projectReaders`, `projectWriters`, and
-    `projectOwners` dataset access.
-  - Validated explicit runtime access after IAM hardening.
-  - Confirmed `BigQueryReplayStateStore` operates correctly within the
-    restricted runtime boundary.
-  - No long-lived service-account keys are required.
+- [x] Introduce Mercury-authored `OperationalError` values
+- [x] Remove persistence of raw exception text from connector and replay failure paths
+- [x] Preserve exception chaining for transient debugging
+- [x] Add security regression tests preventing sensitive exception content from reaching persisted operational state
 
-Detailed security findings and validation evidence are maintained under
-`docs/security/`.
+### Phase 3 — Infrastructure Security and Least Privilege
 
-**Status:** Complete.
+- [x] Introduce a dedicated `mercury-runtime` service account
+- [x] Apply least-privilege GCS and BigQuery permissions
+- [x] Validate immutable Raw object creation and deny runtime deletion
+- [x] Confirm runtime cannot create arbitrary BigQuery datasets
+- [x] Remove broad BigQuery `projectReaders`, `projectWriters`, and `projectOwners` dataset access
+- [x] Validate explicit runtime access after IAM hardening
+- [x] Confirm `BigQueryReplayStateStore` operates correctly within the restricted runtime boundary
+- [x] Validate keyless runtime execution without long-lived service-account keys
 
-With ADR-011 complete, development resumes with ADR-010 Phase 3B — targeted
-recovery execution.
+Detailed security findings and validation evidence are maintained under `docs/security/`.
 
-  **Outcome:** Mercury now has an explicitly validated least-privilege runtime boundary, safe persisted operational errors, immutable Raw storage behavior, restricted destructive cloud access, explicit BigQuery dataset access, and separation between infrastructure administration and application runtime.
+**Outcome:** Mercury has an explicitly validated least-privilege runtime boundary, safe persisted operational errors, immutable Raw storage behavior, restricted destructive cloud access, explicit BigQuery dataset access, and separation between infrastructure administration and application runtime.
 
 ## Day 12 — Targeted Recovery Planning & Execution
 
@@ -889,7 +985,7 @@ recovery execution.
 - [x] Avoid unnecessary reruns of already-complete source work
 - [x] Define `SKIP`, `INGEST_AND_LOAD`, `LOAD_ONLY`, `RECONCILE`, and `MANUAL_REVIEW`
 - [x] Require explicit validated Raw evidence before selecting warehouse-only recovery
-- [x] Keep ambiguous reconciliation decisions out of automatic execution
+- [x] Establish an explicit boundary for ambiguous reconciliation decisions
 
 ### ADR-010 Phase 3B — Recovery Execution
 
@@ -904,7 +1000,6 @@ recovery execution.
 - [x] Execute `INGEST_AND_LOAD` through connector ingestion and BigQuery Raw loading
 - [x] Execute `LOAD_ONLY` directly from validated immutable GCS Raw artifacts
 - [x] Prevent `LOAD_ONLY` from downloading, copying, or rewriting Raw artifacts
-- [x] Keep `RECONCILE` and `MANUAL_REVIEW` safely blocked
 - [x] Validate recovery requests before performing physical work
 - [x] Lazily fetch source deliveries only when ingestion recovery requires them
 - [x] Fetch source deliveries only once per recovery execution
@@ -919,7 +1014,6 @@ recovery execution.
 - [x] Apply ADR-011 safe operational-error handling throughout recovery execution
 - [x] Preserve exception chaining for transient debugging without leaking provider exception content
 - [x] Keep Phase 3A planning behavior unchanged
-- [x] Keep Phase 3C reconciliation explicitly out of scope
 - [x] Complete full automated regression suite — 1084 tests passing
 
 ### Recovery Architecture
@@ -927,39 +1021,209 @@ recovery execution.
 ```text
 Replay State + Recovery Evidence
               ↓
-       RecoveryPlanner
+        RecoveryPlanner
               ↓
-         RecoveryPlan
+          RecoveryPlan
               ↓
-       RecoveryExecutor
-         ↙          ↘
+        RecoveryExecutor
+          ↙          ↘
 Source Provider     Validated Raw Artifact
       ↓                     ↓
-Connector             LOAD_ONLY
+  Connector             LOAD_ONLY
       ↓                     ↓
 Immutable GCS Raw ──────────┘
               ↓
-       BigQuery Raw
+        BigQuery Raw
               ↓
-   Append-Only Replay State
+    Append-Only Replay State
               ↓
 Date Completeness Re-Derivation
 ```
 
 ### Phase Boundary
 
-Automatic recovery now handles only actions for which Mercury has sufficient evidence to perform safe deterministic work.
+At the completion of Phase 3B:
 
 ```text
 SKIP             → no work
 INGEST_AND_LOAD  → automated
 LOAD_ONLY        → automated
-RECONCILE        → blocked
+RECONCILE        → reconciliation boundary
 MANUAL_REVIEW    → blocked
 ```
 
-Ambiguous physical/control-plane state is deliberately deferred to ADR-010 Phase 3C rather than guessed by the execution layer.
+**Outcome:** ADR-010 Phases 3A and 3B established stage-aware targeted recovery. Mercury can inspect durable replay history, determine the minimum safe recovery action for each source, execute deterministic recovery work without unnecessarily rerunning successful stages, reuse validated immutable Raw artifacts, preserve source-level failure isolation, append recovery attempts under fresh execution identities, and re-derive business-date completeness from monotonic durable completion history.
 
-**Outcome:** ADR-010 Phases 3A and 3B are complete. Mercury can now inspect durable replay history, determine the minimum safe recovery action for each source, execute deterministic recovery work without unnecessarily rerunning successful stages, reuse validated immutable Raw artifacts, preserve source-level failure isolation, append recovery attempts under fresh execution identities, and re-derive business-date completeness from monotonic durable completion history. Recovery execution remains inside the security boundary established by ADR-011. The complete automated regression suite passes with 1084 tests. Phase 3C will address reconciliation and manual-review workflows for ambiguous physical/control-plane state.
+## Day 13 — Provenance-Backed Reconciliation & Ingestion Completion
 
-  
+### ADR-010 Phase 3C — Provenance Foundation
+
+- [x] Introduce `RawArtifactProvenance`
+- [x] Introduce `WarehouseLoadProvenance`
+- [x] Introduce `ProvenanceStore`
+- [x] Implement `BigQueryProvenanceStore`
+- [x] Create append-only Raw artifact provenance persistence
+- [x] Create append-only warehouse-load provenance persistence
+- [x] Link warehouse loads to immutable Raw artifacts through `provenance_id`
+- [x] Integrate provenance persistence with normal historical replay
+- [x] Integrate provenance persistence with targeted recovery
+- [x] Preserve control-plane fail-closed behavior for provenance persistence
+- [x] Remove arbitrary BigQuery insertion error details from durable/display-safe provenance errors
+- [x] Add sentinel security tests proving insertion error payloads cannot leak through provenance exceptions
+
+### Physical Artifact Inspection
+
+- [x] Introduce `RawArtifactObservation`
+- [x] Introduce `RawArtifactInspector`
+- [x] Implement `GCSArtifactInspector`
+- [x] Inspect immutable GCS Raw objects without downloading payloads
+- [x] Validate object existence
+- [x] Validate persisted SHA-256 metadata
+- [x] Validate object size
+- [x] Introduce `WarehousePartitionObservation`
+- [x] Introduce `WarehouseInspector`
+- [x] Implement `BigQueryInspector`
+- [x] Inspect BigQuery partition metadata through `INFORMATION_SCHEMA.PARTITIONS`
+- [x] Avoid querying Raw payload rows during reconciliation
+
+### Recovery Reconciliation
+
+- [x] Introduce `ReconciliationOutcome`
+- [x] Introduce finite `ReconciliationReason` values
+- [x] Introduce `ReconciliationResult`
+- [x] Implement `RecoveryReconciler`
+- [x] Resolve the latest warehouse-load provenance for a logical source
+- [x] Resolve the exact linked Raw artifact provenance
+- [x] Validate cross-record logical identity
+- [x] Compare durable provenance with GCS physical metadata
+- [x] Compare durable provenance with BigQuery physical metadata
+- [x] Validate artifact record count against warehouse output rows
+- [x] Support valid zero-record reconciliation
+- [x] Return `CONFIRMED` only when the complete evidence chain agrees
+- [x] Return finite structural `BLOCKED` reasons when evidence is missing or contradictory
+- [x] Keep infrastructure failures distinct from normal blocked reconciliation outcomes
+- [x] Preserve exception chaining for reconciliation infrastructure failures
+
+### GCS Ingestion-Date Consistency
+
+- [x] Validate the exact `ingestion_date=YYYY-MM-DD` path segment in immutable GCS URIs
+- [x] Compare URI ingestion date with `RawArtifactProvenance.ingestion_date`
+- [x] Block missing ingestion-date path evidence
+- [x] Block malformed ingestion-date path evidence
+- [x] Block mismatching ingestion-date path evidence
+- [x] Reject coincidental `ingestion_date` substrings outside the exact path-segment contract
+- [x] Keep generic reconciliation independent of Olist `delivery_date + 1` semantics
+
+### RecoveryExecutor Reconciliation Integration
+
+- [x] Execute `RECONCILE` through `RecoveryReconciler`
+- [x] Convert confirmed reconciliation into recovery outcome `SUCCEEDED`
+- [x] Append exactly one `SUCCESS | WAREHOUSE` event for confirmed reconciliation
+- [x] Avoid fabricating `RUNNING | WAREHOUSE` when no new warehouse operation occurs
+- [x] Perform zero connector work during confirmed reconciliation
+- [x] Perform zero GCS mutation during confirmed reconciliation
+- [x] Perform zero BigQuery loading during confirmed reconciliation
+- [x] Append no replay-state event when reconciliation is blocked
+- [x] Keep `MANUAL_REVIEW` blocked with zero physical work
+
+### Final Automated Validation
+
+- [x] Validate provenance domain models
+- [x] Validate BigQuery provenance persistence
+- [x] Validate GCS artifact inspection
+- [x] Validate BigQuery warehouse inspection
+- [x] Validate every reconciliation blocked reason
+- [x] Validate successful reconciliation
+- [x] Validate zero-record reconciliation
+- [x] Validate GCS ingestion-date consistency
+- [x] Validate no Olist-specific date derivation enters generic reconciliation
+- [x] Validate reconciliation performs zero physical work when confirming prior success
+- [x] Validate ADR-011 sentinel protections across provenance and reconciliation paths
+- [x] Preserve all historical replay and recovery regression coverage
+- [x] Run complete ingestion test suite — **1251 passed, 0 failed**
+
+### Final Ingestion Architecture
+
+```text
+                    SOURCE DELIVERY
+                          ↓
+                SourceDeliveryProvider
+                          ↓
+               HistoricalReplayRunner
+                          ↓
+                  Reusable Connectors
+                          ↓
+                 Immutable GCS Raw
+                          ↓
+                    BigQuery Raw
+```
+
+Operational control plane:
+
+```text
+                 ReplayStateStore
+                       +
+                 ProvenanceStore
+                       ↓
+          Append-Only Operational History
+```
+
+Targeted recovery:
+
+```text
+Replay History + Recovery Evidence
+                ↓
+         RecoveryPlanner
+                ↓
+          RecoveryPlan
+                ↓
+         RecoveryExecutor
+          /      |       \
+         /       |        \
+INGEST_AND_LOAD LOAD_ONLY RECONCILE
+                           ↓
+                   RecoveryReconciler
+                    /             \
+                   /               \
+          RawArtifactInspector   WarehouseInspector
+                 ↓                    ↓
+           GCS Metadata        BigQuery Metadata
+                   \              /
+                    \            /
+                     ↓          ↓
+                  Provenance Evidence
+                         ↓
+                 CONFIRMED / BLOCKED
+```
+
+### Day 13 Outcome
+
+ADR-010 is complete.
+
+Mercury now has a production-inspired ingestion and Raw-platform architecture that supports:
+
+- reusable source connectors;
+- realistic historical source delivery;
+- immutable GCS Raw landing;
+- explicit BigQuery Raw loading;
+- append-only source-level replay state;
+- partial source availability;
+- monotonic logical completion;
+- stage-aware targeted recovery;
+- safe immutable-artifact reuse;
+- append-only physical provenance;
+- Raw-artifact-to-warehouse-load lineage;
+- metadata-only GCS and BigQuery inspection;
+- provenance-backed reconciliation;
+- conservative blocking of ambiguous or contradictory evidence;
+- least-privilege cloud execution;
+- ADR-011-safe operational error handling.
+
+The complete ingestion regression suite passes:
+
+```text
+1251 passed
+0 failed
+```
+
+**Outcome:** Sprint 2 — Cloud Raw Platform & Historical Replay is complete. Mercury's ingestion layer has reached its intended current scope. Development can now move from building and protecting the Raw data foundation to **Sprint 3 — Analytics Engineering**, where BigQuery Raw will become the source for Dataform staging models, canonical warehouse models, and business-facing data-quality contracts.
