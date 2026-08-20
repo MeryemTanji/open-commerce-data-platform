@@ -10,7 +10,7 @@ Accepted
 
 ## Related Decisions
 
-- ADR-007, ADR-008, ADR-009
+- ADR-007, ADR-008, ADR-009, ADR-011
 
 ---
 
@@ -107,7 +107,7 @@ Mercury needs to know:
 - which data is already safely available;
 - whether the business date is complete;
 - which replay invocation produced the outcome;
-- what work should eventually be eligible for targeted recovery.
+- what work is eligible for targeted recovery.
 
 A single date-level status such as:
 
@@ -135,7 +135,7 @@ Each source will be observed independently.
 
 Each state transition will be stored as an **append-only replay event**.
 
-Mercury will derive date-level completeness from the latest source-level states.
+Mercury will derive date-level completeness from durable source-level completion history.
 
 Mercury will also distinguish:
 
@@ -151,7 +151,27 @@ date completeness
 
 Successfully processed independent source data may become available in BigQuery even when another source for the same date fails.
 
-The overall date remains incomplete until every expected source has completed successfully.
+The overall date remains incomplete until every expected source has successfully completed its required path through BigQuery Raw.
+
+Targeted recovery is divided into three responsibilities:
+
+```text
+RecoveryPlanner
+        ↓
+decides what work is required
+        ↓
+RecoveryExecutor
+        ↓
+executes only safe and unambiguous work
+        ↓
+Reconciliation
+        ↓
+resolves ambiguous physical/control-plane state
+```
+
+Recovery planning and recovery execution are deliberately separate.
+
+Ambiguous recovery is deliberately blocked rather than guessed.
 
 ---
 
@@ -161,7 +181,7 @@ Mercury uses three different identities for replay metadata.
 
 ## run_id
 
-`run_id` identifies one top-level replay execution attempt.
+`run_id` identifies one top-level replay or recovery execution attempt.
 
 For example:
 
@@ -186,12 +206,22 @@ run_day(...)
 
 also receives its own `run_id`.
 
+Likewise, one:
+
+```python
+RecoveryExecutor.execute_plan(...)
+```
+
+invocation receives one fresh `run_id`.
+
 Conceptually:
 
 ```text
 run_id
-→ which replay execution attempt produced this event?
+→ which replay or recovery execution attempt produced this event?
 ```
+
+A recovery run never reuses the `run_id` of an earlier failed attempt.
 
 ---
 
@@ -208,6 +238,8 @@ SUCCESS | WAREHOUSE
 ```
 
 are three different events and therefore have three different `event_id` values.
+
+Recovery execution follows the same rule.
 
 Conceptually:
 
@@ -238,7 +270,7 @@ Therefore:
 
 ```text
 run_id
-    → replay attempt
+    → replay/recovery attempt
 
 event_id
     → individual state transition
@@ -280,21 +312,32 @@ run B | payments | SUCCESS | WAREHOUSE
 
 Both histories remain available.
 
-The latest event represents the current known state of the logical source delivery.
+Earlier successful completion also remains valid historical evidence if a later re-attempt fails.
+
+For example:
+
+```text
+run A | payments | SUCCESS | WAREHOUSE
+run B | payments | RUNNING | WAREHOUSE
+run B | payments | FAILED  | WAREHOUSE
+```
+
+must not erase the fact that Payments previously completed successfully for that logical delivery.
 
 This provides:
 
 - auditability;
 - debugging history;
 - visibility into previous failures;
-- future retry/recovery traceability;
+- retry/recovery traceability;
+- monotonic completion history;
 - protection against destructive state updates.
 
 ---
 
 # Replay Status
 
-Mercury defines three source-level replay statuses:
+Mercury defines three persisted source-level replay statuses:
 
 ```text
 RUNNING
@@ -305,6 +348,19 @@ FAILED
 There is no persisted `NOT_RUN` state.
 
 If no event exists for a logical source delivery, that source has not been attempted.
+
+Recovery execution additionally exposes execution outcomes:
+
+```text
+SKIPPED
+SUCCEEDED
+FAILED
+BLOCKED
+```
+
+These are recovery-execution results, not additional persisted replay statuses.
+
+They describe what the executor did with a planned recovery item.
 
 ---
 
@@ -350,11 +406,11 @@ could later produce independently attributable source-delivery state.
 
 # SUCCESS Semantics
 
-`SUCCESS` has exactly one meaning:
+Persisted `SUCCESS` has exactly one meaning:
 
-> The individual source successfully completed its required end-to-end replay path through BigQuery Raw.
+> The individual source successfully completed its required end-to-end path through BigQuery Raw.
 
-Therefore the only valid successful terminal state is:
+Therefore the only valid successful terminal replay state is:
 
 ```text
 SUCCESS | WAREHOUSE
@@ -385,6 +441,14 @@ SUCCESS | WAREHOUSE
 
 This invariant is enforced by the replay-state domain model.
 
+Recovery execution uses the separate outcome value:
+
+```text
+SUCCEEDED
+```
+
+to avoid conflating execution-result terminology with persisted replay-state terminology.
+
 ---
 
 # ReplayStateRecord
@@ -412,7 +476,7 @@ UTC is used for persisted operational timestamps.
 
 # started_at Semantics
 
-For one logical source execution attempt, `started_at` represents the beginning of that source's execution during the current replay attempt.
+For one logical source execution attempt, `started_at` represents the beginning of that source's execution during the current replay or recovery attempt.
 
 The same source-execution start time may therefore be associated with its subsequent state transitions.
 
@@ -444,7 +508,7 @@ abstraction.
 
 The state store is responsible for durable operational state.
 
-Its core contract supports:
+Its core contract supports operations including:
 
 ```text
 append(record)
@@ -454,6 +518,8 @@ get_history(delivery_date, source_object)
 get_latest(delivery_date, source_object)
 
 get_latest_for_date(delivery_date)
+
+get_completed_for_date(delivery_date)
 ```
 
 The contract contains no BigQuery-specific concepts.
@@ -557,23 +623,27 @@ source_object
 
 # Resource Initialization
 
-BigQuery metadata resources are created explicitly through the BigQuery-backed state store.
+BigQuery metadata resources are initialized explicitly through the BigQuery-backed state store.
 
 Construction of `BigQueryReplayStateStore` must not unexpectedly provision infrastructure.
 
-Resource creation therefore occurs through an explicit operation such as:
+The state-store adapter exposes an explicit operation such as:
 
 ```text
 ensure_resources()
 ```
 
-Dataset and table creation are idempotent.
+for validating or ensuring required replay-state resources.
 
-Existing resources are not deleted or recreated.
+However, Mercury's production runtime identity is not permitted to create datasets.
 
-`HistoricalReplayRunner` depends only on the generic `ReplayStateStore` contract and therefore does not call BigQuery-specific provisioning methods.
+Dataset creation remains a human-owned infrastructure responsibility.
 
-Infrastructure initialization remains outside the runner.
+Runtime code may ensure or use already-existing replay-state resources within the permissions deliberately granted to it.
+
+`HistoricalReplayRunner` and `RecoveryExecutor` depend only on the generic `ReplayStateStore` contract and therefore do not call BigQuery-specific provisioning methods.
+
+Infrastructure ownership remains outside orchestration.
 
 ---
 
@@ -583,7 +653,7 @@ A daily replay remains one date-level orchestration unit.
 
 However, the sources inside the date are independently executed and observed.
 
-Mercury uses two ordered execution phases:
+Mercury uses two ordered execution phases for normal historical replay:
 
 ```text
 SourceDeliveryBatch
@@ -600,8 +670,8 @@ validate complete expected membership
 +-------------+-------------+
               |
               v
-       collect individual
-       connector outcomes
+        collect individual
+        connector outcomes
               |
               v
 +---------------------------+
@@ -612,10 +682,10 @@ validate complete expected membership
 +-------------+-------------+
               |
               v
-    derive date completeness
+     derive date completeness
 ```
 
-Mercury completes all ingestion attempts before entering the warehouse phase.
+Mercury completes all ingestion attempts before entering the warehouse phase during normal historical replay.
 
 It does **not** interleave:
 
@@ -627,13 +697,17 @@ payments warehouse
 ...
 ```
 
-Stage separation remains intentional.
+during the ordinary daily replay path.
+
+Targeted recovery is different.
+
+A recovery plan may contain different actions for different logical sources, and `RecoveryExecutor` executes each planned source according to the safe work selected by `RecoveryPlanner`.
 
 ---
 
 # Why Stage Separation Is Preserved
 
-Stage separation makes the execution state easier to reason about.
+Stage separation makes normal replay execution state easier to reason about.
 
 After the ingestion phase Mercury can clearly determine:
 
@@ -656,6 +730,8 @@ warehouse loading
 ```
 
 without requiring every source to succeed before useful data may progress.
+
+Recovery planning preserves those same boundaries when deciding whether ingestion must be repeated or whether an existing validated Raw artifact may be reused.
 
 ---
 
@@ -708,11 +784,11 @@ FAILED | INGESTION
 
 for that source.
 
-The failure metadata includes the available error information.
+Failure metadata follows Mercury's operational-error safety contract.
 
-That source is not eligible for warehouse loading.
+That source is not eligible for warehouse loading in that execution path.
 
-However, the failure does not stop other expected source connectors for the same date from being attempted.
+However, the failure does not stop other independent safe work for the same date.
 
 Therefore:
 
@@ -752,7 +828,7 @@ when warehouse loading begins.
 
 # Warehouse Eligibility
 
-After all expected ingestion attempts have completed, Mercury determines which sources are warehouse-eligible.
+After expected ingestion attempts have completed during normal replay, Mercury determines which sources are warehouse-eligible.
 
 A source is eligible only when its ingestion completed successfully and produced a valid landed Raw artifact.
 
@@ -788,6 +864,8 @@ Its latest state remains:
 FAILED | INGESTION
 ```
 
+Recovery may later determine that warehouse loading alone is appropriate when a validated immutable Raw artifact already exists.
+
 ---
 
 # Warehouse Phase
@@ -798,7 +876,10 @@ Before a BigQuery Raw load begins for an eligible source, Mercury records:
 RUNNING | WAREHOUSE
 ```
 
-The existing `BigQueryRawLoader` is then called using the landing path produced by connector ingestion metadata.
+The existing `BigQueryRawLoader` is then called using either:
+
+- the landing path produced by successful connector ingestion; or
+- an explicitly supplied validated `gs://` Raw artifact for a `LOAD_ONLY` recovery action.
 
 The orchestration layer does not reconstruct GCS paths.
 
@@ -812,7 +893,9 @@ Only after the BigQuery load succeeds does Mercury record:
 SUCCESS | WAREHOUSE
 ```
 
-This means the source completed:
+This means the source completed its required path through BigQuery Raw.
+
+For an ordinary ingestion path:
 
 ```text
 source available
@@ -825,6 +908,8 @@ BigQuery Raw loading
         ↓
 SUCCESS
 ```
+
+For `LOAD_ONLY` recovery, the validated immutable GCS artifact already exists, so ingestion is deliberately not repeated.
 
 ---
 
@@ -846,7 +931,7 @@ Mercury does not:
 - overwrite Raw data;
 - hide the failure.
 
-A warehouse failure for one source does not prevent the other eligible independent sources for the same date from being attempted.
+A warehouse failure for one source does not prevent other independently safe recovery or replay work for the same date from being attempted.
 
 ---
 
@@ -879,14 +964,7 @@ reviews
     warehouse succeeded
 ```
 
-The resulting latest replay states are:
-
-```text
-orders       SUCCESS | WAREHOUSE
-order_items  SUCCESS | WAREHOUSE
-payments     FAILED  | INGESTION
-reviews      SUCCESS | WAREHOUSE
-```
+The resulting replay history contains successful completion for Orders, Order Items, and Reviews, while Payments remains failed.
 
 The resulting BigQuery availability is:
 
@@ -900,6 +978,12 @@ reviews      available
 This is intentional.
 
 Mercury does not withhold valid independent source data merely because another source failed.
+
+Targeted recovery extends the same principle:
+
+> Failure of one recoverable source does not block unrelated safe recovery work for another source.
+
+Control-plane failures are different and may require immediate abort.
 
 ---
 
@@ -963,68 +1047,62 @@ payments
 reviews
 ```
 
-Mercury queries the latest source-level state for the date.
+Completion is derived from durable successful completion evidence for those logical source deliveries.
 
-A date is complete only when:
-
-1. all expected source objects are represented;
-2. no unexpected source objects are present in the state set being evaluated;
-3. all records belong to the same delivery date;
-4. every expected source's latest state is:
+A date is complete only when every expected source has successfully completed:
 
 ```text
 SUCCESS | WAREHOUSE
 ```
 
+at least once for that logical delivery.
+
 Conceptually:
 
 ```text
-orders       SUCCESS
-order_items  SUCCESS
-payments     SUCCESS
-reviews      SUCCESS
--------------------------
+orders       completed successfully
+order_items  completed successfully
+payments     completed successfully
+reviews      completed successfully
+------------------------------------
 DATE         COMPLETE
 ```
 
-If any source is:
+If any expected source has never successfully completed its required warehouse path, the date remains incomplete.
+
+A later failed recovery attempt does not erase an earlier successful completion.
+
+For example:
 
 ```text
-missing
-RUNNING
-FAILED
+run A | payments | SUCCESS | WAREHOUSE
+run B | payments | FAILED  | WAREHOUSE
 ```
 
-then:
+still means Payments has completed successfully for that business date.
 
-```text
-DATE         INCOMPLETE
-```
+The failed later attempt remains visible in append-only history, but completion is monotonic.
 
 ---
 
 # is_date_complete()
 
-Mercury uses a pure domain helper such as:
+Mercury uses the pure domain helper:
 
 ```text
 is_date_complete()
 ```
 
-to derive date completeness.
+to derive completeness from the relevant set of completed logical source records.
 
-The function operates on current/latest source states.
+The function validates that:
 
-It returns `False` for valid but incomplete state, including:
-
-- missing expected source;
-- failed source;
-- running source;
-- unexpected source.
+- all expected sources are represented;
+- no unexpected sources are present in the state set being evaluated;
+- all records belong to the same delivery date;
+- every supplied completion record represents `SUCCESS | WAREHOUSE`.
 
 Malformed caller input is rejected rather than silently interpreted.
-
-For example, records from multiple delivery dates are invalid input and raise an error.
 
 This distinguishes:
 
@@ -1037,6 +1115,8 @@ from:
 ```text
 invalid state evaluation
 ```
+
+The state store's completed-source query provides the durable completion evidence used by recovery execution before calling this helper.
 
 ---
 
@@ -1149,9 +1229,9 @@ geolocations
 
 is currently a one-off load rather than a multi-date historical replay.
 
-Source-level recovery tracking for the initial/reference workflow is not required by this ADR's initial implementation.
+Source-level recovery tracking for the initial/reference workflow is not required by this ADR's current implementation.
 
-`run_initial_load()` may therefore remain unchanged unless a later operational requirement explicitly extends replay-state tracking to reference loads.
+`run_initial_load()` remains unchanged unless a later operational requirement explicitly extends replay-state tracking to reference loads.
 
 ---
 
@@ -1187,7 +1267,7 @@ status
 stage
 ```
 
-Mercury must not unnecessarily copy every connector metadata field into the replay-state table.
+Mercury does not unnecessarily copy every connector metadata field into the replay-state table.
 
 The existing `ConnectorRunResult` remains the source of ingestion-level detail.
 
@@ -1232,9 +1312,13 @@ It must not roll back:
 - the immutable GCS object;
 - the successful BigQuery load.
 
-This represents a partial control-plane failure and must remain visible for future reconciliation/recovery design.
+This represents a partial control-plane failure and requires future reconciliation rather than destructive guessing.
 
 State persistence is therefore not treated as optional best-effort logging.
+
+During recovery execution, replay-state append failure is fail-closed.
+
+`RecoveryExecutor` aborts immediately rather than continuing to later sibling work when required control-plane state cannot be persisted.
 
 ---
 
@@ -1250,16 +1334,41 @@ fails before a valid source-delivery batch exists, Mercury cannot safely attribu
 
 In that case:
 
-- the provider failure propagates;
+- the provider failure is surfaced as a recovery-orchestration failure;
 - no fabricated per-source state events are written;
 - connector execution does not begin;
 - warehouse loading does not begin.
 
-Future independently observable source providers may allow source-level `SOURCE_DELIVERY` state to be persisted.
+During recovery, the provider is called only when at least one planned item requires:
+
+```text
+INGEST_AND_LOAD
+```
+
+A plan containing only:
+
+```text
+SKIP
+LOAD_ONLY
+RECONCILE
+MANUAL_REVIEW
+```
+
+does not fetch source deliveries.
+
+When source deliveries are required, the provider is fetched once for the recovery plan.
+
+Every required `INGEST_AND_LOAD` source must resolve to exactly one matching `SourceDelivery`.
+
+Zero matches are invalid.
+
+Multiple matches for the same required source are also invalid because Mercury must not silently choose between ambiguous source deliveries.
+
+Unrelated extra deliveries in the provider batch may be ignored.
 
 ---
 
-# Current-State Derivation Across Runs
+# Current-State and Completion Derivation Across Runs
 
 Replay history may contain multiple attempts.
 
@@ -1270,107 +1379,765 @@ run A | payments | FAILED  | INGESTION
 run B | payments | SUCCESS | WAREHOUSE
 ```
 
-Current state is derived from the latest recorded state for the logical source delivery.
+The append-only history preserves both attempts.
 
-Therefore the current Payments state is:
+For operational diagnostics, the most recent event remains available.
+
+For completion semantics, successful completion is monotonic.
+
+Therefore:
 
 ```text
-SUCCESS | WAREHOUSE
+run A | payments | SUCCESS | WAREHOUSE
+run B | payments | FAILED  | WAREHOUSE
 ```
 
-while the earlier failure remains visible in history.
+does not revoke the successful completion achieved by run A.
 
-The append-only model preserves both operational truth and current-state derivation.
+The later failure remains important operational history, but it does not make previously successful physical work cease to exist.
+
+This distinction is required because replay state describes both:
+
+```text
+what happened most recently
+```
+
+and:
+
+```text
+whether the logical source has ever completed successfully
+```
+
+These are related but not identical questions.
 
 ---
 
-# Recovery Direction
+# Recovery Architecture
 
 Persisted source-level state makes targeted recovery possible.
 
-Suppose:
+Recovery is divided into three phases:
 
 ```text
-run A
-
-orders       SUCCESS | WAREHOUSE
-order_items  SUCCESS | WAREHOUSE
-payments     FAILED  | INGESTION
-reviews      SUCCESS | WAREHOUSE
+Phase 3A
+Recovery planning
+        ↓
+Phase 3B
+Recovery execution
+        ↓
+Phase 3C
+Reconciliation / manual review
 ```
 
-The date is incomplete.
+The separation is deliberate.
 
-A future targeted recovery should be able to operate on:
+The planner decides.
 
-```text
-payments
-```
+The executor performs only work that is already known to be safe.
 
-without unnecessarily rerunning:
-
-```text
-orders
-order_items
-reviews
-```
-
-A later attempt may produce:
-
-```text
-run B
-
-payments     RUNNING | INGESTION
-payments     RUNNING | WAREHOUSE
-payments     SUCCESS | WAREHOUSE
-```
-
-The latest states then become:
-
-```text
-orders       SUCCESS
-order_items  SUCCESS
-payments     SUCCESS
-reviews      SUCCESS
-```
-
-and the date becomes complete.
-
-This is the intended recovery direction.
+Reconciliation resolves cases where the persisted control-plane state is insufficient to determine the physical truth safely.
 
 ---
 
-# Recovery Safety
+# Phase 3A — Recovery Planning
 
-Replay state tells Mercury **what happened**.
+Phase 3A introduces a pure recovery decision layer.
 
-It does not automatically mean every failed operation can simply be repeated from the beginning.
+The core concepts are:
 
-Recovery logic must consider the failure stage.
+```text
+RecoveryAction
+RecoveryEvidence
+RecoveryPlanItem
+RecoveryPlan
+RecoveryPlanner
+```
+
+`RecoveryPlanner` performs no physical work.
+
+It does not:
+
+- call source providers;
+- construct connectors;
+- write to GCS;
+- load BigQuery;
+- append replay-state events;
+- reconcile physical state.
+
+Its responsibility is:
+
+```text
+replay history + recovery evidence
+        ↓
+RecoveryPlanner
+        ↓
+RecoveryPlan
+```
+
+The planner determines the safe next action for each logical source.
+
+The available actions are:
+
+```text
+SKIP
+INGEST_AND_LOAD
+LOAD_ONLY
+RECONCILE
+MANUAL_REVIEW
+```
+
+This preserves a strong architectural boundary:
+
+> Deciding what recovery is safe is separate from executing recovery.
+
+---
+
+# Recovery Actions
+
+## SKIP
+
+`SKIP` means no physical recovery work is required.
+
+Typically this applies when the source has already completed successfully and no recovery work should be repeated.
+
+The executor performs:
+
+```text
+no provider work
+no connector work
+no GCS work
+no BigQuery work
+no replay-state append
+```
+
+The execution outcome is:
+
+```text
+SKIPPED
+```
+
+---
+
+## INGEST_AND_LOAD
+
+`INGEST_AND_LOAD` means Mercury must reacquire/reprocess the source through the connector and then load the resulting immutable Raw artifact into BigQuery.
+
+The execution path is:
+
+```text
+RUNNING | INGESTION
+        ↓
+connector
+        ↓
+immutable GCS Raw landing
+        ↓
+RUNNING | WAREHOUSE
+        ↓
+BigQueryRawLoader
+        ↓
+SUCCESS | WAREHOUSE
+```
+
+If ingestion fails:
+
+```text
+RUNNING | INGESTION
+FAILED  | INGESTION
+```
+
+and warehouse loading does not begin.
+
+If warehouse loading fails:
+
+```text
+RUNNING | INGESTION
+RUNNING | WAREHOUSE
+FAILED  | WAREHOUSE
+```
+
+The source failure does not prevent unrelated safe sibling recovery work.
+
+---
+
+## LOAD_ONLY
+
+`LOAD_ONLY` means ingestion must not be repeated.
+
+The caller supplies a:
+
+```text
+ValidatedRawArtifact
+```
+
+containing:
+
+```text
+source_object
+delivery_date
+gcs_uri
+```
+
+The artifact must reference an explicitly supplied validated:
+
+```text
+gs://...
+```
+
+Raw object.
+
+Execution is:
+
+```text
+existing validated immutable Raw artifact
+        ↓
+RUNNING | WAREHOUSE
+        ↓
+BigQueryRawLoader
+        ↓
+SUCCESS | WAREHOUSE
+```
+
+No connector is constructed.
+
+Mercury does not:
+
+- download the Raw object;
+- copy it;
+- rewrite it;
+- generate a signed URL;
+- make it public;
+- create another GCS object.
+
+The existing immutable artifact is loaded directly.
+
+---
+
+## RECONCILE
+
+`RECONCILE` means the available state is insufficient to determine a safe physical action automatically.
+
+Phase 3B does not attempt reconciliation.
+
+The executor returns:
+
+```text
+BLOCKED
+```
+
+and performs:
+
+```text
+no connector work
+no GCS work
+no BigQuery work
+no replay-state append
+```
+
+Reconciliation belongs to Phase 3C.
+
+---
+
+## MANUAL_REVIEW
+
+`MANUAL_REVIEW` represents a recovery case that cannot safely proceed automatically under the current contract.
+
+Phase 3B returns:
+
+```text
+BLOCKED
+```
+
+and performs no physical work.
+
+Manual-review workflow design belongs to Phase 3C.
+
+---
+
+# Recovery Request Validation
+
+Recovery requests are validated before physical side effects begin.
+
+For one `execute_plan()` invocation, Mercury validates the supplied `ValidatedRawArtifact` collection before:
+
+- source-provider access;
+- connector construction;
+- storage work;
+- BigQuery loading;
+- replay-state append.
+
+Validation rejects:
+
+- duplicate artifact `source_object` values;
+- artifact `delivery_date` values that differ from the plan;
+- missing artifacts required by `LOAD_ONLY`;
+- artifacts supplied for sources whose planned action is not `LOAD_ONLY`.
+
+Malformed recovery requests fail before execution begins.
+
+This prevents partially executing a recovery plan that was invalid from the start.
+
+---
+
+# RecoveryExecutionOutcome
+
+Phase 3B introduces:
+
+```text
+RecoveryExecutionOutcome
+```
+
+with:
+
+```text
+SKIPPED
+SUCCEEDED
+FAILED
+BLOCKED
+```
+
+These outcomes describe executor behavior.
+
+They are distinct from persisted replay statuses.
+
+---
+
+# RecoveryItemExecutionResult
+
+Each planned source produces a structural:
+
+```text
+RecoveryItemExecutionResult
+```
+
+containing:
+
+```text
+source_object
+planned_action
+outcome
+ingestion_result
+warehouse_result
+```
+
+The model prevents impossible combinations.
 
 For example:
 
-## Failed During Ingestion Before GCS Landing
+- `SKIP` cannot carry ingestion or warehouse results;
+- `RECONCILE` cannot carry physical-work results;
+- `MANUAL_REVIEW` cannot carry physical-work results;
+- `LOAD_ONLY` cannot carry an ingestion result;
+- successful `LOAD_ONLY` must carry its warehouse result;
+- successful `INGEST_AND_LOAD` must carry the results required by that path.
 
-A future recovery may need to rerun the connector.
+The result deliberately contains no arbitrary free-form `detail` field.
 
-## Failed After GCS Landing but Before Warehouse Completion
+---
 
-The immutable Raw artifact may already exist.
+# RecoveryExecutionResult
 
-Recovery should therefore avoid blindly rerunning ingestion if doing so would collide with the existing immutable GCS destination.
+One recovery-plan execution produces:
 
-## Failed During Warehouse Loading
+```text
+RecoveryExecutionResult
+```
 
-The correct recovery may be to reuse the existing GCS artifact and retry only the warehouse stage.
+containing:
 
-## Warehouse Succeeded but SUCCESS State Persistence Failed
+```text
+delivery_date
+run_id
+items
+date_complete
+```
 
-The data may already exist correctly in BigQuery even though replay metadata does not yet reflect that success.
+The result also exposes convenient views of:
 
-This requires reconciliation rather than destructive reprocessing.
+```text
+succeeded
+failed
+skipped
+blocked
+```
 
-Therefore recovery actions must remain stage-aware.
+items.
+
+`plan.delivery_date` is the single date authority.
+
+No second ingestion-date parameter is introduced.
+
+---
+
+# RecoveryExecutor
+
+Phase 3B introduces:
+
+```text
+RecoveryExecutor
+```
+
+with four injected dependencies:
+
+```text
+SourceDeliveryProvider
+StorageManager
+BigQueryRawLoader
+ReplayStateStore
+```
+
+These are abstractions or existing platform components.
+
+`RecoveryExecutor` does not hard-code:
+
+- Olist-specific providers;
+- GCS-specific orchestration behavior;
+- BigQuery replay-state persistence;
+- connector classes.
+
+The high-level flow is:
+
+```text
+RecoveryPlan
+        ↓
+validate complete recovery request
+        ↓
+fetch source deliveries only if required
+        ↓
+generate fresh recovery run_id
+        ↓
+execute each planned source action
+        ↓
+append required replay-state transitions
+        ↓
+query durable completed-source state
+        ↓
+derive date completeness
+        ↓
+RecoveryExecutionResult
+```
+
+---
+
+# Shared Connector Construction
+
+Normal replay and targeted recovery must construct connectors consistently.
+
+Phase 3B therefore extracts shared connector construction into:
+
+```text
+connector_builder.py
+```
+
+which owns:
+
+```text
+CONNECTOR_MAP
+build_connector()
+```
+
+Both:
+
+```text
+HistoricalReplayRunner
+RecoveryExecutor
+```
+
+use the same builder.
+
+Conceptually:
+
+```text
+                 connector_builder
+                 /               \
+                /                 \
+HistoricalReplayRunner       RecoveryExecutor
+```
+
+`HistoricalReplayRunner` retains its existing private connector-construction interface but delegates to the shared builder.
+
+This avoids duplicating connector mapping logic without introducing an unnecessary framework or factory hierarchy.
+
+---
+
+# Recovery Source-Delivery Semantics
+
+`SourceDeliveryProvider` is lazy during recovery.
+
+It is called:
+
+```text
+0 times
+```
+
+when no `INGEST_AND_LOAD` item exists.
+
+It is called:
+
+```text
+exactly once
+```
+
+when one or more `INGEST_AND_LOAD` items exist.
+
+Only required source deliveries are selected for execution.
+
+For every required `INGEST_AND_LOAD` source, exactly one matching `SourceDelivery` must exist.
+
+Therefore:
+
+```text
+0 matches
+    → recovery orchestration failure
+
+1 match
+    → valid
+
+2+ matches
+    → recovery orchestration failure
+```
+
+Extra unrelated provider deliveries do not invalidate the plan.
+
+The exact-one rule is enforced by `RecoveryExecutor` even though the current `SourceDeliveryBatch` implementation also validates duplicate source objects.
+
+This provides defense in depth at the recovery-execution boundary.
+
+---
+
+# Recovery State Sequences
+
+For successful `INGEST_AND_LOAD`:
+
+```text
+RUNNING | INGESTION
+RUNNING | WAREHOUSE
+SUCCESS | WAREHOUSE
+```
+
+For failed ingestion:
+
+```text
+RUNNING | INGESTION
+FAILED  | INGESTION
+```
+
+For warehouse failure after successful ingestion:
+
+```text
+RUNNING | INGESTION
+RUNNING | WAREHOUSE
+FAILED  | WAREHOUSE
+```
+
+For successful `LOAD_ONLY`:
+
+```text
+RUNNING | WAREHOUSE
+SUCCESS | WAREHOUSE
+```
+
+For failed `LOAD_ONLY`:
+
+```text
+RUNNING | WAREHOUSE
+FAILED  | WAREHOUSE
+```
+
+`SKIP`, `RECONCILE`, and `MANUAL_REVIEW` produce no replay-state events during Phase 3B.
+
+---
+
+# Recovery Failure Isolation
+
+Ordinary source execution failures are isolated at the source level.
+
+For example:
+
+```text
+orders
+    INGEST_AND_LOAD
+    → ingestion fails
+
+payments
+    LOAD_ONLY
+    → may still succeed
+```
+
+Likewise:
+
+```text
+orders
+    warehouse fails
+
+payments
+    LOAD_ONLY
+    → may still succeed
+```
+
+This follows Mercury's existing:
+
+```text
+attempt-all-safe-work
+```
+
+principle.
+
+A source-level physical failure does not automatically terminate unrelated safe recovery work.
+
+---
+
+# Recovery Control-Plane Failure
+
+Replay-state persistence failure is different from an ordinary source failure.
+
+If required state cannot be appended, Mercury can no longer reliably describe what it is doing.
+
+Therefore recovery execution fails closed.
+
+A replay-state append failure:
+
+```text
+raises RecoveryExecutionError
+        ↓
+aborts the recovery execution
+        ↓
+prevents later sibling physical work
+```
+
+The original exception is preserved through exception chaining.
+
+The public/durable error message must not contain arbitrary raw exception text.
+
+---
+
+# Recovery Provider Failure
+
+If the source provider fails while obtaining deliveries required by `INGEST_AND_LOAD`, `RecoveryExecutor` raises:
+
+```text
+RecoveryExecutionError
+```
+
+before per-source execution begins.
+
+No replay-state events are fabricated.
+
+No BigQuery loading begins.
+
+The original exception is preserved as the chained cause.
+
+---
+
+# ADR-011 Operational Error Boundary
+
+Recovery execution complies with ADR-011.
+
+Operational failures must not persist or expose arbitrary:
+
+```text
+str(exc)
+repr(exc)
+```
+
+content.
+
+Warehouse failures are represented through structured:
+
+```text
+OperationalError
+```
+
+values using the appropriate category and:
+
+```text
+component = RecoveryExecutor
+```
+
+Connector ingestion failures reuse connector error metadata that already conforms to ADR-011.
+
+`RecoveryExecutionError` messages remain safe for display or durable operational use.
+
+Original exceptions remain available through Python exception chaining for debugging.
+
+This gives Mercury both:
+
+```text
+safe durable/display text
+```
+
+and:
+
+```text
+preserved technical cause
+```
+
+without leaking uncontrolled exception payloads into operational metadata.
+
+---
+
+# Recovery Date-Completeness Re-Derivation
+
+After all planned items have been processed, `RecoveryExecutor` re-derives completion from durable replay state.
+
+It does not infer completion only from the current recovery invocation.
+
+Conceptually:
+
+```text
+execute recovery plan
+        ↓
+ReplayStateStore.get_completed_for_date(delivery_date)
+        ↓
+is_date_complete(..., expected_sources)
+        ↓
+date_complete
+```
+
+This matters because a recovery plan normally processes only a subset of the date.
+
+Already-successful sibling sources from earlier runs must remain part of the completion calculation.
+
+---
+
+# Monotonic Completion
+
+Successful completion is monotonic.
+
+Suppose all four sources already completed successfully:
+
+```text
+orders       SUCCESS | WAREHOUSE
+order_items  SUCCESS | WAREHOUSE
+payments     SUCCESS | WAREHOUSE
+reviews      SUCCESS | WAREHOUSE
+```
+
+The date is complete.
+
+If a later explicit recovery attempt for Payments fails:
+
+```text
+later run
+
+payments     FAILED | WAREHOUSE
+```
+
+the earlier successful Payments completion is not erased.
+
+Therefore:
+
+```text
+DATE COMPLETE
+```
+
+remains true.
+
+The failed re-attempt remains visible in append-only history.
+
+This preserves both:
+
+- operational truth about the later failure;
+- physical truth that the logical source had already completed successfully.
 
 ---
 
@@ -1391,6 +2158,88 @@ behavior merely to make retry logic convenient.
 Existing Raw artifacts remain immutable.
 
 Existing successfully loaded independent sources remain preserved.
+
+`LOAD_ONLY` exists specifically so Mercury can reuse a validated immutable Raw artifact rather than unnecessarily recreating it.
+
+---
+
+# Reconciliation Boundary
+
+Some failure states cannot be safely resolved from replay metadata alone.
+
+The canonical example remains:
+
+```text
+BigQuery load physically succeeds
+        ↓
+SUCCESS replay-state append fails
+```
+
+The physical warehouse state and control-plane state may now disagree.
+
+Phase 3B does not guess.
+
+Such work is planned as:
+
+```text
+RECONCILE
+```
+
+and execution returns:
+
+```text
+BLOCKED
+```
+
+without physical work.
+
+The same principle applies to:
+
+```text
+MANUAL_REVIEW
+```
+
+cases.
+
+This boundary prevents the recovery executor from turning uncertainty into destructive reprocessing.
+
+---
+
+# Phase 3C — Reconciliation / Manual Review
+
+Phase 3C is not implemented by the current ADR-010 work.
+
+Its purpose is to resolve recovery cases where physical state must be inspected before a safe next action can be determined.
+
+Expected concerns include:
+
+```text
+persisted replay state
+        +
+physical GCS / BigQuery evidence
+        ↓
+reconciliation
+        ↓
+safe resolved action
+```
+
+Phase 3C must preserve:
+
+- append-only replay history;
+- Raw immutability;
+- ADR-011 operational-error safety;
+- source independence;
+- monotonic completion;
+- no destructive guessing.
+
+Until Phase 3C is explicitly designed and implemented:
+
+```text
+RECONCILE
+MANUAL_REVIEW
+```
+
+remain blocked execution outcomes.
 
 ---
 
@@ -1413,29 +2262,40 @@ Automatic retry strategy may be introduced separately after these semantics are 
 
 # Recovery Scope
 
-ADR-010 establishes the operational state and execution semantics required for targeted source recovery.
+ADR-010 now establishes both the operational state and the implemented planning/execution architecture required for targeted source recovery.
 
-The intended recovery model is:
+The implemented recovery model is:
 
 ```text
-identify incomplete date
+inspect replay history and evidence
         ↓
-inspect latest source states
+RecoveryPlanner
         ↓
-identify failed/incomplete sources
+RecoveryPlan
         ↓
-determine failure stage
+validate complete execution request
+        ↓
+RecoveryExecutor
         ↓
 perform only safe required work
         ↓
-append new state under new run_id
+append new events under fresh run_id
         ↓
-derive date completeness again
+derive completion from durable history
 ```
 
-Recovery must not unnecessarily rerun already successful independent sources.
+The current automatic execution boundary is:
 
-The exact public recovery API may be introduced during implementation or in a subsequent narrowly scoped decision once stage-aware recovery behavior is finalized.
+```text
+unambiguous safe work
+        → execute
+
+ambiguous physical/control-plane state
+        → BLOCKED
+        → Phase 3C
+```
+
+Recovery does not unnecessarily rerun already successful independent sources.
 
 ---
 
@@ -1443,7 +2303,7 @@ The exact public recovery API may be introduced during implementation or in a su
 
 Replay-state persistence belongs to orchestration, not source acquisition.
 
-`OlistSimulatedSourceProvider` must not manage replay state.
+`OlistSimulatedSourceProvider` does not manage replay state.
 
 Likewise a future:
 
@@ -1453,7 +2313,7 @@ RestApiSourceProvider
 
 must not require changes to the generic replay-state model.
 
-The intended dependency direction is:
+The normal replay dependency direction is:
 
 ```text
 SourceDeliveryProvider
@@ -1463,15 +2323,21 @@ HistoricalReplayRunner
 ReplayStateStore
 ```
 
-not:
+The recovery dependency direction is:
 
 ```text
-Olist simulator
+RecoveryPlanner
         ↓
-Olist-specific state database
+RecoveryPlan
+        ↓
+RecoveryExecutor
+       /   \
+      /     \
+SourceDeliveryProvider
+ReplayStateStore
 ```
 
-This preserves ADR-009's provider abstraction.
+Provider implementations remain independent of replay-state persistence.
 
 ---
 
@@ -1492,6 +2358,8 @@ Not responsible for:
 - replay-state persistence;
 - recovery decisions.
 
+During recovery it is consulted only when the plan requires fresh ingestion.
+
 ---
 
 ## Connector / Ingestion Layer
@@ -1509,6 +2377,7 @@ Not responsible for:
 - date completeness;
 - replay range progression;
 - replay-state queries;
+- recovery planning;
 - recovery orchestration.
 
 ---
@@ -1518,14 +2387,16 @@ Not responsible for:
 Responsible for:
 
 ```text
-loading successfully landed Raw artifacts into BigQuery Raw
+loading successfully landed or explicitly validated Raw artifacts
+into BigQuery Raw
 ```
 
 Not responsible for:
 
 - replay-state persistence;
 - source completeness;
-- retry decisions.
+- retry decisions;
+- recovery planning.
 
 ---
 
@@ -1534,7 +2405,7 @@ Not responsible for:
 Responsible for:
 
 ```text
-daily orchestration
+daily normal-replay orchestration
 expected-source validation
 ingestion-phase execution
 warehouse eligibility
@@ -1546,6 +2417,61 @@ range progression/stopping
 
 It depends on the generic `ReplayStateStore`.
 
+It does not perform targeted recovery planning.
+
+---
+
+## RecoveryPlanner
+
+Responsible for:
+
+```text
+inspect recovery evidence
+interpret prior replay state
+select safe recovery action per source
+produce RecoveryPlan
+```
+
+Not responsible for:
+
+- provider calls;
+- connector execution;
+- GCS writes;
+- BigQuery loads;
+- replay-state writes;
+- physical reconciliation.
+
+The planner decides.
+
+It does not execute.
+
+---
+
+## RecoveryExecutor
+
+Responsible for:
+
+```text
+validate recovery execution request
+obtain source deliveries when required
+execute safe planned actions
+append recovery state transitions
+isolate ordinary source failures
+fail closed on control-plane failures
+derive post-recovery date completeness
+```
+
+Not responsible for:
+
+- deciding recovery policy;
+- inventing recovery actions;
+- reconciling ambiguous physical state;
+- destructive Raw recovery.
+
+The executor executes the plan.
+
+It does not reinterpret the plan.
+
 ---
 
 ## ReplayStateStore
@@ -1555,6 +2481,7 @@ Responsible for:
 ```text
 durable append-only source-level replay history
 latest-state retrieval
+completed-source retrieval
 date-level state retrieval
 ```
 
@@ -1570,15 +2497,37 @@ Responsible for:
 persisting ReplayStateRecord objects in BigQuery metadata
 querying replay history
 querying latest source state
+querying completed logical sources
 ```
 
 It does not know about:
 
 - connectors;
 - Olist;
-- GCS;
+- GCS Raw behavior;
 - BigQuery Raw loading;
-- replay range logic.
+- replay range logic;
+- recovery policy.
+
+---
+
+## Shared Connector Builder
+
+Responsible for:
+
+```text
+CONNECTOR_MAP
+consistent connector construction
+```
+
+Used by:
+
+```text
+HistoricalReplayRunner
+RecoveryExecutor
+```
+
+It does not orchestrate execution.
 
 ---
 
@@ -1629,11 +2578,11 @@ Rejected.
 
 A failure in one independent source should not prevent Mercury from learning the state of or making available other safe sources for the same date.
 
-Mercury therefore attempts all expected ingestion sources and all independently eligible warehouse loads.
+Mercury therefore attempts all safe independent work.
 
 ---
 
-## End-to-End Source-by-Source Interleaving
+## End-to-End Source-by-Source Interleaving for Normal Replay
 
 Example:
 
@@ -1644,9 +2593,9 @@ payments     ingestion → warehouse
 reviews      ingestion → warehouse
 ```
 
-Rejected as the preferred model.
+Rejected as the preferred normal replay model.
 
-Mercury preserves clean stage boundaries:
+Mercury preserves clean normal-replay stage boundaries:
 
 ```text
 all ingestion attempts
@@ -1654,7 +2603,7 @@ all ingestion attempts
 warehouse eligible sources
 ```
 
-This makes operational reasoning and recovery simpler.
+Targeted recovery may execute different planned actions per source because it is not a full normal replay of the date.
 
 ---
 
@@ -1662,7 +2611,7 @@ This makes operational reasoning and recovery simpler.
 
 Rejected.
 
-Date completeness is derived from source-level latest state.
+Date completeness is derived from durable source-level completion evidence.
 
 Persisting it separately would create two mutable representations of the same truth.
 
@@ -1681,6 +2630,8 @@ GCS existence proves Raw landing but does not prove BigQuery success.
 Rejected.
 
 BigQuery availability does not explain source-delivery or ingestion failures and does not preserve full execution history.
+
+Physical BigQuery evidence may later participate in explicit reconciliation, but it does not replace replay state.
 
 ---
 
@@ -1712,6 +2663,48 @@ Recovery must be stage-aware.
 
 ---
 
+## Combine Recovery Planning and Execution
+
+Rejected.
+
+A single component that both decides recovery policy and performs physical work would make recovery harder to reason about and test.
+
+Mercury instead uses:
+
+```text
+RecoveryPlanner
+        ↓
+RecoveryPlan
+        ↓
+RecoveryExecutor
+```
+
+This keeps policy separate from side effects.
+
+---
+
+## Let RecoveryExecutor Reinterpret the Plan
+
+Rejected.
+
+`RecoveryExecutor` does not second-guess or silently replace planned actions.
+
+Malformed execution requests are rejected.
+
+Ambiguous actions remain blocked.
+
+---
+
+## Automatically Reconcile Ambiguous State During Phase 3B
+
+Rejected.
+
+Physical/control-plane disagreement requires an explicit reconciliation contract.
+
+Phase 3B therefore returns `BLOCKED` for `RECONCILE` and `MANUAL_REVIEW`.
+
+---
+
 # Consequences
 
 ## Positive
@@ -1724,21 +2717,37 @@ Partial source availability is supported.
 
 A single failing source no longer unnecessarily blocks unrelated successfully processed data for the same date.
 
-Date completeness remains explicit.
+Date completeness remains explicit and derived.
 
 Historical range progression remains conservative after an incomplete date.
 
 Failures can be associated with the correct stage.
 
-Replay attempts can be correlated through `run_id`.
+Replay and recovery attempts can be correlated through `run_id`.
 
 Individual transitions can be identified through `event_id`.
 
 Past failures remain auditable after successful recovery.
 
+Successful completion remains monotonic across later re-attempts.
+
 The architecture supports future API-based independent sources.
 
-The metadata provides the information required for targeted recovery.
+Recovery decisions are separated from recovery side effects.
+
+Safe targeted recovery is now executable.
+
+Existing immutable Raw artifacts can be reused through `LOAD_ONLY`.
+
+Malformed recovery requests fail before side effects.
+
+Ordinary source failures remain isolated.
+
+Control-plane persistence failures fail closed.
+
+Ambiguous reconciliation cases are blocked instead of guessed.
+
+ADR-011 error-safety guarantees extend through recovery execution.
 
 Raw immutability remains intact.
 
@@ -1746,49 +2755,110 @@ Raw immutability remains intact.
 
 ## Negative
 
-Historical replay becomes operationally more complex.
+Historical replay and recovery are operationally more complex.
 
 A BigQuery date may intentionally contain only some source partitions/tables.
 
 Downstream consumers cannot assume that one available source means the full date is complete.
 
-Replay-state persistence becomes part of the control plane and therefore another dependency that can itself fail.
+Replay-state persistence is part of the control plane and therefore another dependency that can itself fail.
 
-Recovery requires stage-aware logic.
+Recovery requires stage-aware planning.
+
+Recovery execution requires careful preflight validation.
 
 The append-only state table grows with each transition and recovery attempt.
 
-Operational tooling will eventually be needed to make replay status easy to inspect.
+Current-state diagnostics and logical completion require different queries/interpretations.
+
+Reconciliation remains a separate future implementation problem.
+
+Operational tooling will eventually be needed to make replay and recovery status easy to inspect.
 
 ---
 
 # Validation Requirements
 
-The completed implementation must prove at minimum:
+The implementation must prove the following.
 
-1. `run_id` is persisted with every replay event;
-2. one range invocation shares one `run_id`;
-3. separate replay invocations use different `run_id` values;
-4. every event has a unique `event_id`;
-5. source state is tracked independently;
-6. `RUNNING | INGESTION` is written before connector execution;
-7. ingestion failures produce `FAILED | INGESTION`;
-8. one ingestion failure does not prevent other expected source ingestion attempts for the same date;
-9. only successfully ingested sources enter the warehouse phase;
-10. `RUNNING | WAREHOUSE` is written before BigQuery loading;
-11. warehouse success produces `SUCCESS | WAREHOUSE`;
-12. warehouse failure produces `FAILED | WAREHOUSE`;
-13. one warehouse failure does not prevent other eligible source warehouse attempts for the same date;
-14. successfully processed independent data remains available;
-15. date completeness is derived only after all safe work for the date is attempted;
-16. incomplete date stops later dates in the historical range;
-17. provider failure before a batch exists does not fabricate per-source state;
-18. state-store failure is not silently ignored;
-19. replay state does not weaken GCS immutability;
-20. replay state does not change existing Raw schema/loading rules;
-21. existing connector metadata remains available;
-22. all automated tests remain offline;
-23. all existing tests continue to pass.
+## Replay-State Foundation and Normal Replay
+
+1. `run_id` is persisted with every replay event.
+2. One range invocation shares one `run_id`.
+3. Separate replay invocations use different `run_id` values.
+4. Every event has a unique `event_id`.
+5. Source state is tracked independently.
+6. `RUNNING | INGESTION` is written before connector execution.
+7. Ingestion failures produce `FAILED | INGESTION`.
+8. One ingestion failure does not prevent other expected source ingestion attempts for the same date.
+9. Only successfully ingested sources enter the normal replay warehouse phase.
+10. `RUNNING | WAREHOUSE` is written before BigQuery loading.
+11. Warehouse success produces `SUCCESS | WAREHOUSE`.
+12. Warehouse failure produces `FAILED | WAREHOUSE`.
+13. One warehouse failure does not prevent other eligible source warehouse attempts for the same date.
+14. Successfully processed independent data remains available.
+15. Date completeness is derived only after all safe work for the date is attempted.
+16. An incomplete date stops later dates in the historical range.
+17. Provider failure before a batch exists does not fabricate per-source state.
+18. State-store failure is not silently ignored.
+19. Replay state does not weaken GCS immutability.
+20. Replay state does not change existing Raw schema/loading rules.
+21. Existing connector metadata remains available.
+22. All automated tests remain offline.
+23. All existing tests continue to pass.
+
+## Phase 3A — Recovery Planning
+
+24. Recovery planning is side-effect free.
+25. Recovery decisions are represented through explicit `RecoveryAction` values.
+26. Already-successful sources can be planned as `SKIP`.
+27. Safe full reprocessing can be planned as `INGEST_AND_LOAD`.
+28. Safe warehouse-only reuse can be planned as `LOAD_ONLY`.
+29. Ambiguous cases can be represented as `RECONCILE` or `MANUAL_REVIEW`.
+30. Planning does not weaken Raw immutability.
+31. Planning remains separate from execution.
+
+## Phase 3B — Recovery Execution
+
+32. Recovery execution validates the complete request before physical side effects.
+33. Duplicate validated artifacts are rejected.
+34. Wrong-date validated artifacts are rejected.
+35. Missing `LOAD_ONLY` artifacts are rejected.
+36. Artifacts for non-`LOAD_ONLY` actions are rejected.
+37. Source delivery is fetched only when `INGEST_AND_LOAD` requires it.
+38. One recovery plan performs at most one daily source-provider fetch.
+39. Every required ingestion source resolves to exactly one `SourceDelivery`.
+40. Duplicate required source deliveries are rejected before execution side effects.
+41. `SKIP` performs no physical work and writes no replay state.
+42. `INGEST_AND_LOAD` executes connector ingestion followed by warehouse loading.
+43. Ingestion failure prevents warehouse loading for that source.
+44. `LOAD_ONLY` loads the explicitly supplied validated GCS artifact directly.
+45. `LOAD_ONLY` does not construct or execute a connector.
+46. `LOAD_ONLY` does not download, copy, rewrite, sign, or expose the Raw object.
+47. `RECONCILE` returns `BLOCKED` and performs no physical work.
+48. `MANUAL_REVIEW` returns `BLOCKED` and performs no physical work.
+49. One recovery invocation uses one fresh `run_id`.
+50. Recovery never reuses an earlier attempt's `run_id`.
+51. Every recovery state transition receives a unique `event_id`.
+52. Recovery state sequences match the planned physical work.
+53. Ordinary source failures do not block unrelated safe sibling work.
+54. Replay-state append failure aborts recovery execution.
+55. Source-provider failure aborts before per-source execution.
+56. Recovery orchestration failures preserve original exceptions through chaining.
+57. Durable/display-safe recovery errors do not contain arbitrary raw exception text.
+58. Recovery complies with ADR-011.
+59. Post-recovery completeness is re-derived from durable state.
+60. Successful completion remains monotonic across later failed re-attempts.
+61. Normal replay and recovery share one connector-construction implementation.
+62. Phase 3B does not implement Phase 3C reconciliation.
+63. The full automated suite remains green.
+
+At Phase 3B completion, the full test suite contains:
+
+```text
+1084 passed
+0 failed
+```
 
 ---
 
@@ -1810,6 +2880,13 @@ ADR-010 does not introduce:
 - Dataform transformations;
 - automatic Raw schema evolution.
 
+Phase 3B additionally does not introduce:
+
+- automatic reconciliation;
+- automatic physical-state repair;
+- destructive conflict resolution;
+- automatic manual-review workflow execution.
+
 These concerns may be introduced separately.
 
 ---
@@ -1818,7 +2895,7 @@ These concerns may be introduced separately.
 
 Implementation proceeds in phases.
 
-## Phase 1 — Replay-State Foundation
+## Phase 1 — Replay-State Foundation ✅
 
 Implemented:
 
@@ -1839,9 +2916,9 @@ BigQuery metadata resources remain separate from Raw.
 
 ---
 
-## Phase 2 — Runner Integration
+## Phase 2 — Runner Integration ✅
 
-The historical replay runner is extended with:
+The historical replay runner was extended with:
 
 ```text
 ReplayStateStore dependency
@@ -1859,41 +2936,156 @@ The existing provider, connectors, storage implementations, and `BigQueryRawLoad
 
 ## Phase 3 — Targeted Recovery
 
-Using the state produced by Phases 1 and 2, Mercury can implement stage-aware recovery.
+Using the state produced by Phases 1 and 2, Mercury implements stage-aware targeted recovery.
 
-Recovery should:
+The recovery architecture is:
 
 ```text
-inspect incomplete date
+Replay history + recovery evidence
         ↓
-inspect latest source states
+RecoveryPlanner
         ↓
-identify only failed/incomplete sources
+RecoveryPlan
         ↓
-determine required recovery stage
+RecoveryExecutor
         ↓
-reuse existing immutable artifacts where appropriate
+safe physical work
         ↓
-append new events under a new run_id
+append-only replay-state events
         ↓
-derive completeness again
+durable completion re-derivation
 ```
 
-Phase 3 must not unnecessarily rerun already successful sources.
+Ambiguous work stops at the reconciliation boundary.
+
+### Phase 3A — Recovery Planning ✅
+
+Implemented:
+
+```text
+RecoveryAction
+RecoveryEvidence
+RecoveryPlanItem
+RecoveryPlan
+RecoveryPlanner
+```
+
+Phase 3A answers:
+
+```text
+What should Mercury do?
+```
+
+It is a pure decision layer.
+
+It performs no provider, connector, GCS, BigQuery, or replay-state side effects.
+
+The planner can select:
+
+```text
+SKIP
+INGEST_AND_LOAD
+LOAD_ONLY
+RECONCILE
+MANUAL_REVIEW
+```
+
+---
+
+### Phase 3B — Recovery Execution ✅
+
+Implemented:
+
+```text
+RecoveryExecutionOutcome
+ValidatedRawArtifact
+RecoveryItemExecutionResult
+RecoveryExecutionResult
+RecoveryExecutionError
+RecoveryExecutor
+connector_builder
+```
+
+Phase 3B answers:
+
+```text
+Execute the safe action selected by Phase 3A.
+```
+
+Implemented behavior includes:
+
+```text
+whole-request prevalidation
+lazy/single source-provider fetch
+exact-one required SourceDelivery validation
+shared connector construction
+SKIP no-op execution
+INGEST_AND_LOAD execution
+LOAD_ONLY direct validated-Raw loading
+RECONCILE → BLOCKED
+MANUAL_REVIEW → BLOCKED
+append-only recovery state transitions
+fresh run_id per execution
+unique event_id per transition
+source-level failure isolation
+fail-closed replay-state persistence
+ADR-011-safe operational errors
+durable date-completeness re-derivation
+monotonic completion
+```
+
+Phase 3B deliberately performs no reconciliation.
+
+The completed implementation is validated by:
+
+```text
+1084 automated tests passing
+```
+
+---
+
+### Phase 3C — Reconciliation / Manual Review ⏳
+
+Not yet implemented.
+
+Phase 3C will address cases where replay metadata alone cannot safely determine the physical truth.
+
+Conceptually:
+
+```text
+RECONCILE / MANUAL_REVIEW
+        ↓
+inspect durable control-plane state
+        +
+inspect relevant physical state
+        ↓
+determine safe resolution
+        ↓
+append auditable outcome
+```
+
+Until Phase 3C is explicitly designed and implemented:
+
+```text
+RECONCILE
+MANUAL_REVIEW
+```
+
+remain blocked and perform no physical work.
 
 ---
 
 # Final Decision
 
-Mercury will persist append-only historical replay state at the source-object and delivery-date grain.
+Mercury persists append-only historical replay state at the source-object and delivery-date grain.
 
-Each replay invocation receives a `run_id`.
+Each replay or recovery invocation receives a `run_id`.
 
 Each state transition receives an `event_id`.
 
 Sources remain independently observable even when orchestrated as one daily batch.
 
-Mercury executes daily replay in two ordered phases:
+Mercury executes normal daily replay in two ordered phases:
 
 ```text
 attempt all expected source ingestions
@@ -1907,11 +3099,13 @@ A failure in one source does not prevent unrelated safe work for the same date.
 
 Successfully processed independent source data may become available even when the overall business date is incomplete.
 
-Date completeness is derived only when all expected sources have reached:
+Logical date completion is derived from durable evidence that every expected source has successfully completed:
 
 ```text
 SUCCESS | WAREHOUSE
 ```
+
+Successful completion is monotonic: a later failed re-attempt does not erase an earlier successful completion.
 
 An incomplete date stops automatic progression to later historical dates after all safe work for the current date has been attempted.
 
@@ -1919,7 +3113,35 @@ Replay state is stored as operational metadata outside the Raw layer.
 
 Existing immutable GCS behavior is preserved.
 
-Recovery will use source-level state and failure-stage information to target only the work that actually requires recovery rather than blindly rerunning already successful sources.
+Targeted recovery is split into:
+
+```text
+RecoveryPlanner
+        ↓
+decide
+
+RecoveryExecutor
+        ↓
+execute safe work
+
+Reconciliation
+        ↓
+resolve ambiguity
+```
+
+`RecoveryPlanner` decides what work is appropriate without side effects.
+
+`RecoveryExecutor` executes only safe, explicit actions.
+
+`LOAD_ONLY` reuses an explicitly validated immutable Raw artifact without downloading, copying, or rewriting it.
+
+Ordinary source failures remain isolated.
+
+Control-plane persistence failures fail closed.
+
+Recovery errors comply with ADR-011 and do not expose arbitrary raw exception text.
+
+Ambiguous `RECONCILE` and `MANUAL_REVIEW` work remains blocked until Phase 3C defines the reconciliation contract.
 
 The governing principles are:
 
@@ -1929,4 +3151,10 @@ The governing principles are:
 
 > Persist what happened before automating recovery from what happened.
 
+> Decide recovery separately from executing recovery.
+
 > Recover only the work that requires recovery while preserving immutable successful work.
+
+> Never turn uncertainty into destructive reprocessing.
+
+> Successful completion is durable historical truth and is not revoked by a later failed re-attempt.

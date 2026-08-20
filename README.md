@@ -56,7 +56,11 @@ The ingestion platform currently supports:
 - explicit BigQuery Raw loading;
 - partition-aware transactional loading;
 - one-off reference-table loading;
-- source-level replay-state persistence foundations.
+- durable append-only source-level replay state;
+- stage-aware targeted recovery planning and execution;
+- reuse of validated immutable Raw artifacts for warehouse-only recovery;
+- monotonic date-completion derivation across replay and recovery attempts;
+- least-privilege and data-leak-prevention security boundaries.
 
 This architecture enables new analytical use cases to reuse existing platform capabilities rather than rebuilding ingestion and transformation logic for every project.
 
@@ -146,11 +150,17 @@ Operational replay metadata is maintained separately from business Raw data so o
 - Explicit BigQuery schemas
 - Source-level replay-state domain model
 - Append-only BigQuery replay-state persistence
+- Replay-runner state integration
+- Stage-aware targeted recovery planning
+- Safe targeted recovery execution
+- Validated immutable Raw artifact reuse
+- Monotonic logical-completion derivation
+- Security hardening and data-leak prevention
 - Automated regression testing
 
 ### Planned
 
-- Replay recovery and resumability
+- Recovery reconciliation and manual-review workflows
 - Dataform staging transformations
 - Canonical business modelling
 - Reusable data products
@@ -277,18 +287,7 @@ BigQuery loading remains separate from connector ingestion so storage and wareho
 
 ## Replay State and Recovery
 
-Mercury has begun introducing durable source-level historical replay state.
-
-ADR-010 Phase 1 establishes:
-
-```text
-ReplayStatus
-ReplayStage
-ReplayStateRecord
-ReplayStateStore
-BigQueryReplayStateStore
-is_date_complete()
-```
+Mercury supports durable source-level historical replay state and stage-aware targeted recovery through ADR-010.
 
 Replay state is append-only and stored separately from business Raw data.
 
@@ -298,11 +297,48 @@ The logical replay identity is:
 delivery_date + source_object
 ```
 
-while individual state transitions receive their own event identity.
+while each execution attempt receives a `run_id` and each persisted state transition receives a unique `event_id`.
 
-The state foundation is designed to support future targeted recovery without weakening immutable Raw storage.
+Targeted recovery is divided into explicit planning and execution responsibilities:
 
-Runner integration and recovery execution remain under active development and are intentionally not considered complete yet.
+```text
+Replay history + recovery evidence
+        ↓
+RecoveryPlanner
+        ↓
+RecoveryPlan
+        ↓
+RecoveryExecutor
+        ↓
+safe physical work
+        ↓
+durable replay-state events
+        ↓
+date-completeness re-derivation
+```
+
+The recovery planner can select:
+
+```text
+SKIP
+INGEST_AND_LOAD
+LOAD_ONLY
+RECONCILE
+MANUAL_REVIEW
+```
+
+`RecoveryExecutor` executes only safe, unambiguous actions:
+
+- `SKIP` performs no physical work;
+- `INGEST_AND_LOAD` reruns ingestion and then loads the resulting immutable Raw artifact;
+- `LOAD_ONLY` reuses an explicitly validated `gs://` Raw artifact without rerunning ingestion;
+- `RECONCILE` and `MANUAL_REVIEW` remain blocked until ADR-010 Phase 3C defines their resolution workflow.
+
+Recovery attempts append new replay-state history under a fresh `run_id`. Ordinary source failures remain isolated so unrelated safe work can continue, while replay-state persistence failures fail closed.
+
+Date completeness is re-derived from durable successful-completion history. An earlier `SUCCESS | WAREHOUSE` remains valid completion evidence even if a later recovery re-attempt fails.
+
+Recovery execution also complies with ADR-011: arbitrary provider or exception text is not persisted in operational failure metadata, Raw artifacts remain immutable, and recovery does not require destructive storage or infrastructure-administration privileges.
 
 ## Security by Design
 
@@ -380,6 +416,9 @@ source simulation
 historical replay orchestration
 BigQuery Raw loading
 replay-state persistence
+recovery planning
+recovery execution
+shared connector construction
 ```
 
 ---
@@ -414,7 +453,8 @@ replay-state persistence
 - [x] Replay-State Persistence Foundation
 - [x] Replay Runner State Integration
 - [x] Security hardening and data-leak prevention
-- [ ] Targeted Replay Recovery
+- [x] Targeted Replay Recovery Planning and Execution
+- [ ] Recovery Reconciliation and Manual Review
 - [ ] Dataform Transformations
 
 ### Phase 3 — Production
@@ -452,7 +492,7 @@ Implemented decisions currently include:
 - ADR-010 — Replay State and Recovery Architecture
 - ADR-011 — Security hardening and data-leak prevention
 
-ADR-010 is being implemented incrementally. Its state and persistence foundation and runner integration are complete; recovery behavior remain in development.
+ADR-010 is being implemented incrementally. Its replay-state foundation, runner integration, recovery planning, and safe recovery execution phases are complete; reconciliation and manual-review handling remain for Phase 3C.
 
 ---
 
@@ -491,26 +531,33 @@ Mercury is developed according to the following principles:
 
 ## Current Status
 
+## Current Status
+
 Mercury currently has a validated cloud ingestion path from simulated source delivery through immutable Google Cloud Storage landing into BigQuery Raw.
 
 Both historical incremental replay and one-off reference loading have been successfully exercised against real GCP infrastructure.
 
-The current stable recovery foundation now includes both ADR-010 Phase 1 and Phase 2.
+ADR-010 now provides a complete replay-state, recovery-planning, and safe recovery-execution path through Phase 3B.
 
-Historical incremental replay records durable append-only source-level state, correlates top-level replay invocations through `run_id`, isolates independent source failures within a business date, preserves successful sibling data, and distinguishes latest-attempt state from monotonic logical completion.
+Historical replay records durable append-only source-level state, correlates top-level replay and recovery invocations through `run_id`, isolates independent source failures within a business date, preserves successful sibling data, and distinguishes latest-attempt state from monotonic logical completion.
 
-Phase 2 has been validated against real GCP infrastructure through:
+Targeted recovery can now:
 
-- a successful three-day replay across 2017-05-16 through 2017-05-18;
-- replay-state persistence and shared `run_id` validation;
-- an already-complete date followed by failed reattempts without logical-completion regression;
-- a controlled 2017-05-19 partial-failure scenario where Payments failed ingestion while Orders, Order Items and Reviews continued successfully through BigQuery Raw.
+- skip sources that require no work;
+- rerun ingestion and warehouse loading where safe;
+- reuse validated immutable Raw artifacts for warehouse-only recovery;
+- continue unrelated safe sibling work after ordinary source failures;
+- fail closed when replay-state persistence is unavailable;
+- append recovery events under a fresh `run_id`;
+- re-derive business-date completeness from durable completion history;
+- preserve prior successful completion across later failed re-attempts;
+- block ambiguous reconciliation and manual-review cases rather than guessing.
 
-All integration-test data created for the historical date range was removed after validation so the development environment remains clean for a future full historical replay. The BigQuery Raw table structures remain available.
+Recovery execution remains within ADR-011's security boundary: Raw artifacts are not destructively overwritten or unnecessarily downloaded, operational errors use safe Mercury-authored messages, and recovery does not require broad infrastructure-administration privileges.
 
-The complete automated regression suite currently passes with 924 tests.
+The complete automated regression suite currently passes with **1084 tests**.
 
-The next engineering step is ADR-010 Phase 3: targeted recovery of incomplete source deliveries.
+The next ADR-010 engineering step is **Phase 3C — reconciliation and manual-review handling for ambiguous physical/control-plane state**.
 
 ---
 

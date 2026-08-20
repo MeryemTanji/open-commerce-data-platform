@@ -196,14 +196,66 @@ Each completed milestone represents a meaningful addition to the platform.
 
 ### ADR-010 Phase 3 — Targeted Recovery
 
-- [ ] Identify incomplete source deliveries
-- [ ] Distinguish failure stage
-- [ ] Avoid rerunning already-complete source work
-- [ ] Reuse immutable GCS artifacts where appropriate
-- [ ] Retry warehouse-only failures safely
-- [ ] Reconcile physical data with control-plane state
-- [ ] Re-evaluate date completeness after recovery
-- [ ] Validate recovery against real GCP
+#### Phase 3A — Recovery Planning
+
+- [x] Define stage-aware recovery decision model
+- [x] Introduce `RecoveryAction`
+- [x] Introduce `RecoveryEvidence`
+- [x] Introduce `RecoveryPlanItem`
+- [x] Introduce `RecoveryPlan`
+- [x] Implement pure `RecoveryPlanner`
+- [x] Identify incomplete source deliveries from durable replay state
+- [x] Distinguish latest-attempt state from logical completion
+- [x] Distinguish ingestion-stage and warehouse-stage failures
+- [x] Avoid rerunning already-complete source work
+- [x] Select `SKIP` when no recovery work is required
+- [x] Select `INGEST_AND_LOAD` when source ingestion must be repeated
+- [x] Select `LOAD_ONLY` when a validated immutable Raw artifact can be reused
+- [x] Select `RECONCILE` when physical and control-plane state cannot be safely resolved automatically
+- [x] Select `MANUAL_REVIEW` when recovery evidence is insufficient or ambiguous
+- [x] Keep recovery planning pure and free of physical side effects
+
+#### Phase 3B — Recovery Execution
+
+- [x] Introduce `RecoveryExecutionOutcome`
+- [x] Introduce `ValidatedRawArtifact`
+- [x] Introduce `RecoveryItemExecutionResult`
+- [x] Introduce `RecoveryExecutionResult`
+- [x] Introduce `RecoveryExecutionError`
+- [x] Implement `RecoveryExecutor`
+- [x] Introduce shared connector construction for replay and recovery
+- [x] Execute `SKIP` with zero physical work
+- [x] Execute `INGEST_AND_LOAD` through connector ingestion followed by BigQuery Raw loading
+- [x] Execute `LOAD_ONLY` directly from an explicitly validated immutable `gs://` Raw artifact
+- [x] Keep `RECONCILE` blocked pending Phase 3C
+- [x] Keep `MANUAL_REVIEW` blocked pending Phase 3C
+- [x] Validate recovery requests before physical side effects
+- [x] Fetch required source deliveries lazily and only once per recovery execution
+- [x] Detect missing and duplicate required source deliveries safely
+- [x] Use one fresh `run_id` per recovery execution
+- [x] Preserve unique `event_id` values for individual recovery-state transitions
+- [x] Persist stage-aware recovery state transitions
+- [x] Preserve source-level failure isolation during recovery
+- [x] Fail closed when replay-state persistence fails
+- [x] Preserve exception chaining without exposing arbitrary provider exception text
+- [x] Reuse ADR-011 safe `OperationalError` semantics
+- [x] Prevent `LOAD_ONLY` from downloading or duplicating immutable Raw artifacts
+- [x] Re-derive date completeness after recovery
+- [x] Preserve monotonic logical completion across later failed recovery attempts
+- [x] Keep Phase 3A recovery planning unchanged
+- [x] Keep Phase 3C reconciliation explicitly out of scope
+- [x] Complete Phase 3B automated regression suite — 1084 tests passing
+
+#### Phase 3C — Reconciliation & Manual Review
+
+- [ ] Define reconciliation semantics for ambiguous physical/control-plane state
+- [ ] Define evidence requirements for automatic reconciliation
+- [ ] Define safe handling of `RECONCILE` recovery actions
+- [ ] Define operational workflow for `MANUAL_REVIEW`
+- [ ] Preserve immutable Raw and append-only replay-state guarantees during reconciliation
+- [ ] Re-evaluate date completeness after reconciliation
+- [ ] Validate reconciliation behavior with automated tests
+- [ ] Validate targeted recovery and reconciliation against real GCP
 
 ### ADR-011 — Data Security, Privacy, and Data-Leak Prevention
 
@@ -405,14 +457,22 @@ Completed:
 - source-level failure isolation within a business date
 - latest-attempt vs monotonic logical-completion semantics
 - real GCP validation of successful, reattempt and partial-failure replay scenarios
-- complete automated regression suite — 924 tests passing
+- ADR-011 security audit and safe operational-error contract
+- ADR-011 least-privilege GCS and BigQuery runtime boundary
+- ADR-010 Phase 3A stage-aware recovery planning
+- ADR-010 Phase 3B safe targeted recovery execution
+- validated immutable Raw artifact reuse for warehouse-only recovery
+- recovery-state persistence under fresh recovery `run_id` values
+- source-level failure isolation during recovery
+- monotonic date-completion re-derivation after recovery
+- complete automated regression suite — 1084 tests passing
 
 Current focus:
 
-- ADR-010 Phase 3 targeted recovery
-- incomplete-source identification
-- stage-aware retry behavior
-- reconciliation of physical Raw data and control-plane state
+- ADR-010 Phase 3C reconciliation and manual-review handling
+- reconciliation of physical Raw data with control-plane state
+- safe resolution of ambiguous recovery evidence
+- real GCP validation of the completed targeted-recovery workflow
 
 ---
 
@@ -815,5 +875,91 @@ With ADR-011 complete, development resumes with ADR-010 Phase 3B — targeted
 recovery execution.
 
   **Outcome:** Mercury now has an explicitly validated least-privilege runtime boundary, safe persisted operational errors, immutable Raw storage behavior, restricted destructive cloud access, explicit BigQuery dataset access, and separation between infrastructure administration and application runtime.
+
+## Day 12 — Targeted Recovery Planning & Execution
+
+### ADR-010 Phase 3A — Recovery Planning
+
+- [x] Define stage-aware targeted recovery semantics
+- [x] Introduce `RecoveryAction`, `RecoveryEvidence`, `RecoveryPlanItem`, and `RecoveryPlan`
+- [x] Implement pure `RecoveryPlanner`
+- [x] Separate recovery decisions from physical recovery execution
+- [x] Identify incomplete source work from durable replay state and recovery evidence
+- [x] Preserve monotonic logical-completion semantics during recovery planning
+- [x] Avoid unnecessary reruns of already-complete source work
+- [x] Define `SKIP`, `INGEST_AND_LOAD`, `LOAD_ONLY`, `RECONCILE`, and `MANUAL_REVIEW`
+- [x] Require explicit validated Raw evidence before selecting warehouse-only recovery
+- [x] Keep ambiguous reconciliation decisions out of automatic execution
+
+### ADR-010 Phase 3B — Recovery Execution
+
+- [x] Introduce `RecoveryExecutionOutcome`
+- [x] Introduce `ValidatedRawArtifact`
+- [x] Introduce `RecoveryItemExecutionResult`
+- [x] Introduce `RecoveryExecutionResult`
+- [x] Introduce `RecoveryExecutionError`
+- [x] Implement `RecoveryExecutor`
+- [x] Extract shared connector construction for historical replay and recovery
+- [x] Execute `SKIP` without physical work or replay-state events
+- [x] Execute `INGEST_AND_LOAD` through connector ingestion and BigQuery Raw loading
+- [x] Execute `LOAD_ONLY` directly from validated immutable GCS Raw artifacts
+- [x] Prevent `LOAD_ONLY` from downloading, copying, or rewriting Raw artifacts
+- [x] Keep `RECONCILE` and `MANUAL_REVIEW` safely blocked
+- [x] Validate recovery requests before performing physical work
+- [x] Lazily fetch source deliveries only when ingestion recovery requires them
+- [x] Fetch source deliveries only once per recovery execution
+- [x] Reject missing or duplicate required source deliveries
+- [x] Introduce one fresh `run_id` per recovery execution
+- [x] Preserve unique `event_id` values for individual state transitions
+- [x] Persist exact stage-aware recovery-state sequences
+- [x] Preserve source-level failure isolation
+- [x] Fail closed on replay-state persistence failure
+- [x] Re-derive date completeness from durable logical-completion history
+- [x] Preserve earlier successful completion after later failed recovery attempts
+- [x] Apply ADR-011 safe operational-error handling throughout recovery execution
+- [x] Preserve exception chaining for transient debugging without leaking provider exception content
+- [x] Keep Phase 3A planning behavior unchanged
+- [x] Keep Phase 3C reconciliation explicitly out of scope
+- [x] Complete full automated regression suite — 1084 tests passing
+
+### Recovery Architecture
+
+```text
+Replay State + Recovery Evidence
+              ↓
+       RecoveryPlanner
+              ↓
+         RecoveryPlan
+              ↓
+       RecoveryExecutor
+         ↙          ↘
+Source Provider     Validated Raw Artifact
+      ↓                     ↓
+Connector             LOAD_ONLY
+      ↓                     ↓
+Immutable GCS Raw ──────────┘
+              ↓
+       BigQuery Raw
+              ↓
+   Append-Only Replay State
+              ↓
+Date Completeness Re-Derivation
+```
+
+### Phase Boundary
+
+Automatic recovery now handles only actions for which Mercury has sufficient evidence to perform safe deterministic work.
+
+```text
+SKIP             → no work
+INGEST_AND_LOAD  → automated
+LOAD_ONLY        → automated
+RECONCILE        → blocked
+MANUAL_REVIEW    → blocked
+```
+
+Ambiguous physical/control-plane state is deliberately deferred to ADR-010 Phase 3C rather than guessed by the execution layer.
+
+**Outcome:** ADR-010 Phases 3A and 3B are complete. Mercury can now inspect durable replay history, determine the minimum safe recovery action for each source, execute deterministic recovery work without unnecessarily rerunning successful stages, reuse validated immutable Raw artifacts, preserve source-level failure isolation, append recovery attempts under fresh execution identities, and re-derive business-date completeness from monotonic durable completion history. Recovery execution remains inside the security boundary established by ADR-011. The complete automated regression suite passes with 1084 tests. Phase 3C will address reconciliation and manual-review workflows for ambiguous physical/control-plane state.
 
   
