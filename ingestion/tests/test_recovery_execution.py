@@ -15,12 +15,25 @@ from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Callable
+from uuid import uuid4
 
 import pytest
 from google.api_core import exceptions as gcs_exceptions
 
+from mercury_ingestion.common.artifact_inspection import RawArtifactInspector, RawArtifactObservation
 from mercury_ingestion.common.metadata import IngestionStatus
 from mercury_ingestion.common.storage import StorageManager, StorageResult
+from mercury_ingestion.orchestration.provenance import (
+    ProvenanceStore,
+    RawArtifactProvenance,
+    WarehouseLoadProvenance,
+)
+from mercury_ingestion.orchestration.reconciliation import (
+    ReconciliationOutcome,
+    ReconciliationReason,
+    ReconciliationResult,
+    RecoveryReconciler,
+)
 from mercury_ingestion.orchestration.recovery import RecoveryAction, RecoveryEvidence, RecoveryPlan, RecoveryPlanner
 from mercury_ingestion.orchestration.recovery_execution import (
     RecoveryExecutionError,
@@ -34,6 +47,7 @@ from mercury_ingestion.orchestration.state import ReplayStage, ReplayStateRecord
 from mercury_ingestion.sources.base import SourceDelivery, SourceDeliveryBatch, SourceDeliveryProvider
 from mercury_ingestion.warehouse import bigquery_loader as bigquery_loader_module
 from mercury_ingestion.warehouse.bigquery_loader import BigQueryRawLoader
+from mercury_ingestion.warehouse.inspection import WarehouseInspector, WarehousePartitionObservation
 
 SENTINEL = "sensitive-test-email@example.invalid"
 DELIVERY_DATE = date(2017, 5, 19)
@@ -250,19 +264,109 @@ class _AssertNeverAppendedStore(ReplayStateStore):
         return ()
 
 
+class _InMemoryProvenanceStore(ProvenanceStore):
+    """A controllable, fully offline ProvenanceStore for orchestration tests."""
+
+    def __init__(self) -> None:
+        self.artifacts: list[RawArtifactProvenance] = []
+        self.warehouse_loads: list[WarehouseLoadProvenance] = []
+        self.fail_artifact_when: Callable[[RawArtifactProvenance], bool] | None = None
+        self.fail_warehouse_load_when: Callable[[WarehouseLoadProvenance], bool] | None = None
+
+    def append_artifact(self, record: RawArtifactProvenance) -> None:
+        if self.fail_artifact_when is not None and self.fail_artifact_when(record):
+            raise RuntimeError(f"simulated provenance-store failure for artifact {record.source_object}")
+        self.artifacts.append(record)
+
+    def append_warehouse_load(self, record: WarehouseLoadProvenance) -> None:
+        if self.fail_warehouse_load_when is not None and self.fail_warehouse_load_when(record):
+            raise RuntimeError(f"simulated provenance-store failure for warehouse load {record.source_object}")
+        self.warehouse_loads.append(record)
+
+    def get_artifact(self, provenance_id: str) -> RawArtifactProvenance | None:
+        return next((a for a in self.artifacts if a.provenance_id == provenance_id), None)
+
+    def get_artifact_history(self, delivery_date: date, source_object: str) -> tuple[RawArtifactProvenance, ...]:
+        matches = [a for a in self.artifacts if a.delivery_date == delivery_date and a.source_object == source_object]
+        return tuple(sorted(matches, key=lambda a: a.recorded_at))
+
+    def get_artifact_by_uri(self, delivery_date: date, source_object: str, gcs_uri: str) -> RawArtifactProvenance | None:
+        matches = [
+            a
+            for a in self.artifacts
+            if a.delivery_date == delivery_date and a.source_object == source_object and a.gcs_uri == gcs_uri
+        ]
+        return max(matches, key=lambda a: a.recorded_at) if matches else None
+
+    def get_warehouse_load_history(self, delivery_date: date, source_object: str) -> tuple[WarehouseLoadProvenance, ...]:
+        matches = [
+            w for w in self.warehouse_loads if w.delivery_date == delivery_date and w.source_object == source_object
+        ]
+        return tuple(sorted(matches, key=lambda w: w.recorded_at))
+
+    def get_latest_warehouse_load(self, delivery_date: date, source_object: str) -> WarehouseLoadProvenance | None:
+        history = self.get_warehouse_load_history(delivery_date, source_object)
+        return history[-1] if history else None
+
+
+class _FakeRawArtifactInspector(RawArtifactInspector):
+    """A controllable, fully offline RawArtifactInspector for reconciler tests."""
+
+    def __init__(self) -> None:
+        self.observations: dict[str, RawArtifactObservation] = {}
+        self.fail_with: Exception | None = None
+
+    def inspect(self, gcs_uri: str) -> RawArtifactObservation:
+        if self.fail_with is not None:
+            raise self.fail_with
+        if gcs_uri in self.observations:
+            return self.observations[gcs_uri]
+        return RawArtifactObservation(gcs_uri=gcs_uri, present=False, checksum=None, file_size_bytes=None)
+
+
+class _FakeWarehouseInspector(WarehouseInspector):
+    """A controllable, fully offline WarehouseInspector for reconciler tests."""
+
+    def __init__(self) -> None:
+        self.observations: dict[tuple[str, date], WarehousePartitionObservation] = {}
+        self.fail_with: Exception | None = None
+
+    def inspect_partition(self, source_object: str, partition_date: date) -> WarehousePartitionObservation:
+        if self.fail_with is not None:
+            raise self.fail_with
+        key = (source_object, partition_date)
+        if key in self.observations:
+            return self.observations[key]
+        return WarehousePartitionObservation(
+            source_object=source_object,
+            partition_date=partition_date,
+            destination=f"mercury-data-platform-dev.raw.{source_object}${partition_date.strftime('%Y%m%d')}",
+            present=False,
+            row_count=None,
+        )
+
+
 def _make_executor(
     tmp_path: Path,
     *,
     storage_manager: StorageManager | None = None,
     source_provider: SourceDeliveryProvider | None = None,
     replay_state_store: ReplayStateStore | None = None,
+    provenance_store: ProvenanceStore | None = None,
+    reconciler: RecoveryReconciler | None = None,
 ) -> tuple[RecoveryExecutor, ReplayStateStore]:
     store = replay_state_store if replay_state_store is not None else _InMemoryReplayStateStore()
+    prov_store = provenance_store if provenance_store is not None else _InMemoryProvenanceStore()
+    active_reconciler = reconciler if reconciler is not None else RecoveryReconciler(
+        prov_store, _FakeRawArtifactInspector(), _FakeWarehouseInspector()
+    )
     executor = RecoveryExecutor(
         source_provider=source_provider or _AssertNeverCalledProvider(),
         storage_manager=storage_manager or _FakeGcsStorageManager(tmp_path / "bucket"),
         bigquery_loader=_make_bigquery_loader(),
         replay_state_store=store,
+        provenance_store=prov_store,
+        reconciler=active_reconciler,
     )
     return executor, store
 
@@ -287,6 +391,32 @@ def _artifact(**overrides: object) -> ValidatedRawArtifact:
     }
     fields.update(overrides)
     return ValidatedRawArtifact(**fields)  # type: ignore[arg-type]
+
+
+def _seed_artifact_provenance(
+    provenance_store: ProvenanceStore, artifact: ValidatedRawArtifact, **overrides: object
+) -> RawArtifactProvenance:
+    """Durably record an existing artifact provenance record matching a ValidatedRawArtifact.
+
+    LOAD_ONLY requires this to already exist -- it never invents
+    provenance for an artifact it did not itself create.
+    """
+    fields = {
+        "provenance_id": str(uuid4()),
+        "run_id": "prior-run",
+        "delivery_date": artifact.delivery_date,
+        "source_object": artifact.source_object,
+        "ingestion_date": artifact.delivery_date,
+        "gcs_uri": artifact.gcs_uri,
+        "checksum": "seed-checksum",
+        "file_size_bytes": 100,
+        "record_count": 1,
+        "recorded_at": datetime.now(timezone.utc),
+    }
+    fields.update(overrides)
+    record = RawArtifactProvenance(**fields)  # type: ignore[arg-type]
+    provenance_store.append_artifact(record)
+    return record
 
 
 def _plan(*evidence: RecoveryEvidence) -> RecoveryPlan:
@@ -363,8 +493,17 @@ class TestRecoveryItemExecutionResultInvariants:
             )
 
     def test_reconcile_valid(self) -> None:
+        blocked_result = ReconciliationResult(
+            delivery_date=DELIVERY_DATE,
+            source_object="reviews",
+            outcome=ReconciliationOutcome.BLOCKED,
+            reason=ReconciliationReason.NO_WAREHOUSE_LOAD_PROVENANCE,
+        )
         result = RecoveryItemExecutionResult(
-            source_object="reviews", planned_action=RecoveryAction.RECONCILE, outcome=RecoveryExecutionOutcome.BLOCKED
+            source_object="reviews",
+            planned_action=RecoveryAction.RECONCILE,
+            outcome=RecoveryExecutionOutcome.BLOCKED,
+            reconciliation_result=blocked_result,
         )
         assert result.outcome is RecoveryExecutionOutcome.BLOCKED
 
@@ -390,7 +529,9 @@ class TestRecoveryItemExecutionResultInvariants:
             )
 
     def test_load_only_failed_must_not_carry_warehouse_result(self, tmp_path: Path) -> None:
-        executor, _ = _make_executor(tmp_path)
+        provenance_store = _InMemoryProvenanceStore()
+        _seed_artifact_provenance(provenance_store, _artifact())
+        executor, _ = _make_executor(tmp_path, provenance_store=provenance_store)
         plan = _plan(_evidence(source_object="payments", logical_completion=False, valid_gcs_raw=True, bigquery_raw_present=False))
         result = executor.execute_plan(plan, [_artifact()])
         real_warehouse_result = result.items[0].warehouse_result
@@ -417,7 +558,9 @@ class TestRecoveryItemExecutionResultInvariants:
     def test_ingest_and_load_failed_must_not_carry_warehouse_result(self, tmp_path: Path) -> None:
         paths = _write_source_files(tmp_path)
         provider = _StubSourceProvider(_daily_batch(paths, DELIVERY_DATE, {"orders"}))
-        executor, _ = _make_executor(tmp_path, source_provider=provider)
+        provenance_store = _InMemoryProvenanceStore()
+        _seed_artifact_provenance(provenance_store, _artifact())
+        executor, _ = _make_executor(tmp_path, source_provider=provider, provenance_store=provenance_store)
         plan = _plan(_evidence(source_object="orders", logical_completion=False))
         ingest_result = executor.execute_plan(plan)
 
@@ -772,7 +915,9 @@ class TestReplayStateEventSequences:
         ]
 
     def test_successful_load_only_appends_two_events(self, tmp_path: Path) -> None:
-        executor, store = _make_executor(tmp_path)
+        provenance_store = _InMemoryProvenanceStore()
+        _seed_artifact_provenance(provenance_store, _artifact())
+        executor, store = _make_executor(tmp_path, provenance_store=provenance_store)
         plan = _plan(_evidence(source_object="payments", logical_completion=False, valid_gcs_raw=True, bigquery_raw_present=False))
 
         executor.execute_plan(plan, [_artifact()])
@@ -899,7 +1044,9 @@ class TestSourceLevelFailureIsolation:
             delivery_date=DELIVERY_DATE,
         )
         provider = _StubSourceProvider(batch)
-        executor, store = _make_executor(tmp_path, source_provider=provider)
+        provenance_store = _InMemoryProvenanceStore()
+        _seed_artifact_provenance(provenance_store, _artifact())
+        executor, store = _make_executor(tmp_path, source_provider=provider, provenance_store=provenance_store)
         plan = _plan(
             _evidence(source_object="orders", logical_completion=False),
             _evidence(source_object="payments", logical_completion=False, valid_gcs_raw=True, bigquery_raw_present=False),
@@ -916,7 +1063,9 @@ class TestSourceLevelFailureIsolation:
     def test_warehouse_failure_does_not_block_sibling_load_only(self, tmp_path: Path) -> None:
         paths = _write_source_files(tmp_path)
         provider = _StubSourceProvider(_daily_batch(paths, DELIVERY_DATE, {"orders"}))
-        executor, _ = _make_executor(tmp_path, source_provider=provider)
+        provenance_store = _InMemoryProvenanceStore()
+        _seed_artifact_provenance(provenance_store, _artifact())
+        executor, _ = _make_executor(tmp_path, source_provider=provider, provenance_store=provenance_store)
         executor.bigquery_loader._client.raise_for_destination["mercury-data-platform-dev.raw.orders$20170519"] = (
             gcs_exceptions.ServiceUnavailable("backend down")
         )
@@ -1244,12 +1393,218 @@ class TestSharedConnectorBuilder:
         assert "from mercury_ingestion.orchestration.connector_builder import build_connector" in source_text
 
 
-class TestNoPhase3CReconciliation:
-    def test_module_defines_no_reconciliation_logic(self) -> None:
+class TestPhase3CDelegatesToReconciler:
+    """Supersedes the pre-Phase-3C expectation that no reconciliation
+    method existed at all -- Phase 3C now legitimately adds a private
+    ``_reconcile`` method, but it must only ever delegate evidence
+    evaluation to ``RecoveryReconciler``, never contain its own GCS/
+    BigQuery inspection logic, connector rerun, or physical mutation.
+    """
+
+    def test_recovery_execution_contains_no_direct_cloud_inspection_calls(self) -> None:
         import inspect
 
         from mercury_ingestion.orchestration import recovery_execution as recovery_execution_module
 
         source_text = Path(inspect.getfile(recovery_execution_module)).read_text(encoding="utf-8")
-        assert "def reconcile" not in source_text
-        assert "def _reconcile" not in source_text
+        # No direct GCS/BigQuery client construction or metadata-inspection
+        # calls belong here -- those live entirely inside the inspector
+        # implementations, reached only through the abstract RecoveryReconciler.
+        assert "gcs.Client(" not in source_text
+        assert "bigquery.Client(" not in source_text
+        assert "blob.reload(" not in source_text
+        assert "INFORMATION_SCHEMA" not in source_text
+
+    def test_reconcile_delegates_to_reconciler_only(self, tmp_path: Path) -> None:
+        provenance_store = _InMemoryProvenanceStore()
+        reconciler = RecoveryReconciler(provenance_store, _FakeRawArtifactInspector(), _FakeWarehouseInspector())
+        executor, store = _make_executor(tmp_path, provenance_store=provenance_store, reconciler=reconciler)
+        plan = _plan(_evidence(source_object="reviews", logical_completion=False, valid_gcs_raw=True, bigquery_raw_present=True))
+
+        result = executor.execute_plan(plan)
+
+        assert result.items[0].outcome is RecoveryExecutionOutcome.BLOCKED
+        assert result.items[0].reconciliation_result is not None
+        assert store.events == []  # BLOCKED: no replay-state event
+
+
+class TestRecoveryExecutorReconcileIntegration:
+    """RECONCILE exercised through the full RecoveryExecutor, not just the isolated reconciler."""
+
+    @staticmethod
+    def _confirming_setup(tmp_path: Path):
+        provenance_store = _InMemoryProvenanceStore()
+        artifact = _seed_artifact_provenance(provenance_store, _artifact(source_object="reviews"))
+        provenance_store.append_warehouse_load(
+            WarehouseLoadProvenance(
+                load_id=str(uuid4()),
+                provenance_id=artifact.provenance_id,
+                run_id="prior-run",
+                delivery_date=DELIVERY_DATE,
+                source_object="reviews",
+                destination="mercury-data-platform-dev.raw.reviews$20170519",
+                partition_date=DELIVERY_DATE,
+                output_rows=1,
+                job_id="prior-job",
+                recorded_at=datetime.now(timezone.utc),
+            )
+        )
+        artifact_inspector = _FakeRawArtifactInspector()
+        artifact_inspector.observations[artifact.gcs_uri] = RawArtifactObservation(
+            gcs_uri=artifact.gcs_uri, present=True, checksum=artifact.checksum, file_size_bytes=artifact.file_size_bytes
+        )
+        warehouse_inspector = _FakeWarehouseInspector()
+        warehouse_inspector.observations[("reviews", DELIVERY_DATE)] = WarehousePartitionObservation(
+            source_object="reviews",
+            partition_date=DELIVERY_DATE,
+            destination="mercury-data-platform-dev.raw.reviews$20170519",
+            present=True,
+            row_count=1,
+        )
+        reconciler = RecoveryReconciler(provenance_store, artifact_inspector, warehouse_inspector)
+        executor, store = _make_executor(tmp_path, provenance_store=provenance_store, reconciler=reconciler)
+        return executor, store, provenance_store
+
+    def test_confirmed_reconcile_succeeds_with_one_new_success_state(self, tmp_path: Path) -> None:
+        executor, store, _ = self._confirming_setup(tmp_path)
+        plan = _plan(_evidence(source_object="reviews", logical_completion=False, valid_gcs_raw=True, bigquery_raw_present=True))
+
+        result = executor.execute_plan(plan)
+
+        item = result.items[0]
+        assert item.outcome is RecoveryExecutionOutcome.SUCCEEDED
+        assert item.reconciliation_result.outcome is ReconciliationOutcome.CONFIRMED
+        events = [e for e in store.events if e.source_object == "reviews"]
+        assert len(events) == 1
+        assert events[0].status is ReplayStatus.SUCCESS
+        assert events[0].stage is ReplayStage.WAREHOUSE
+
+    def test_confirmed_reconcile_performs_no_connector_gcs_or_bigquery_work(self, tmp_path: Path) -> None:
+        executor, store, _ = self._confirming_setup(tmp_path)
+        plan = _plan(_evidence(source_object="reviews", logical_completion=False, valid_gcs_raw=True, bigquery_raw_present=True))
+
+        result = executor.execute_plan(plan)
+
+        assert result.items[0].ingestion_result is None
+        assert result.items[0].warehouse_result is None
+        assert executor.bigquery_loader._client.load_calls == []
+
+    def test_confirmed_reconcile_re_derives_date_completeness(self, tmp_path: Path) -> None:
+        executor, store, _ = self._confirming_setup(tmp_path)
+        plan = _plan(
+            _evidence(source_object="orders", logical_completion=True),
+            _evidence(source_object="order_items", logical_completion=True),
+            _evidence(source_object="payments", logical_completion=True),
+            _evidence(source_object="reviews", logical_completion=False, valid_gcs_raw=True, bigquery_raw_present=True),
+        )
+
+        result = executor.execute_plan(plan)
+
+        # SKIP items have no durable success record here, so date_complete
+        # depends on real prior state -- this asserts the mechanism used
+        # get_completed_for_date() *after* the reconciliation append, not
+        # that the whole day is complete (which needs prior SKIP sources
+        # to already be durably recorded, out of scope for this test).
+        completed = executor.replay_state_store.get_completed_for_date(DELIVERY_DATE)
+        assert any(r.source_object == "reviews" for r in completed)
+
+    def test_blocked_reconcile_writes_no_state_and_no_provenance(self, tmp_path: Path) -> None:
+        provenance_store = _InMemoryProvenanceStore()  # empty: nothing to confirm
+        executor, store = _make_executor(tmp_path, provenance_store=provenance_store)
+        plan = _plan(_evidence(source_object="reviews", logical_completion=False, valid_gcs_raw=True, bigquery_raw_present=True))
+
+        result = executor.execute_plan(plan)
+
+        assert result.items[0].outcome is RecoveryExecutionOutcome.BLOCKED
+        assert result.items[0].reconciliation_result.reason is ReconciliationReason.NO_WAREHOUSE_LOAD_PROVENANCE
+        assert store.events == []
+        assert provenance_store.artifacts == []
+        assert provenance_store.warehouse_loads == []
+
+
+class TestRecoveryExecutorReconcileInfrastructureFailure:
+    def test_artifact_inspector_failure_raises_safe_error(self, tmp_path: Path) -> None:
+        executor, store, _ = TestRecoveryExecutorReconcileIntegration._confirming_setup(tmp_path)
+        # Reach into the reconciler's own inspector to inject a failure.
+        executor.reconciler.raw_artifact_inspector.fail_with = RuntimeError(f"GCS unavailable: {SENTINEL}")
+        plan = _plan(_evidence(source_object="reviews", logical_completion=False, valid_gcs_raw=True, bigquery_raw_present=True))
+
+        with pytest.raises(RecoveryExecutionError) as exc_info:
+            executor.execute_plan(plan)
+
+        assert SENTINEL not in str(exc_info.value)
+        assert exc_info.value.__cause__ is not None
+        assert SENTINEL in str(exc_info.value.__cause__)
+        assert store.events == []  # no state written on infra failure
+
+    def test_provenance_store_failure_during_reconcile_raises_safe_error(self, tmp_path: Path) -> None:
+        executor, store, provenance_store = TestRecoveryExecutorReconcileIntegration._confirming_setup(tmp_path)
+
+        class _FailingLookupStore(_InMemoryProvenanceStore):
+            def get_latest_warehouse_load(self, delivery_date, source_object):
+                raise RuntimeError(f"provenance query failed: {SENTINEL}")
+
+        failing_store = _FailingLookupStore()
+        executor.reconciler.provenance_store = failing_store
+        plan = _plan(_evidence(source_object="reviews", logical_completion=False, valid_gcs_raw=True, bigquery_raw_present=True))
+
+        with pytest.raises(RecoveryExecutionError) as exc_info:
+            executor.execute_plan(plan)
+
+        assert SENTINEL not in str(exc_info.value)
+        assert exc_info.value.__cause__ is not None
+
+
+class TestProvenanceLineageThroughExecutor:
+    """Design Decision 10: provenance linkage for INGEST_AND_LOAD and LOAD_ONLY."""
+
+    def test_ingest_and_load_creates_linked_artifact_and_warehouse_provenance_with_recovery_run_id(
+        self, tmp_path: Path
+    ) -> None:
+        paths = _write_source_files(tmp_path)
+        provider = _StubSourceProvider(_daily_batch(paths, DELIVERY_DATE, {"orders"}))
+        provenance_store = _InMemoryProvenanceStore()
+        executor, store = _make_executor(tmp_path, source_provider=provider, provenance_store=provenance_store)
+        plan = _plan(_evidence(source_object="orders", logical_completion=False))
+
+        result = executor.execute_plan(plan)
+
+        assert len(provenance_store.artifacts) == 1
+        assert len(provenance_store.warehouse_loads) == 1
+        artifact = provenance_store.artifacts[0]
+        load = provenance_store.warehouse_loads[0]
+        assert load.provenance_id == artifact.provenance_id
+        assert artifact.run_id == result.run_id
+        assert load.run_id == result.run_id
+
+    def test_load_only_creates_no_new_artifact_provenance(self, tmp_path: Path) -> None:
+        provenance_store = _InMemoryProvenanceStore()
+        seeded = _seed_artifact_provenance(provenance_store, _artifact())
+        executor, _ = _make_executor(tmp_path, provenance_store=provenance_store)
+        plan = _plan(_evidence(source_object="payments", logical_completion=False, valid_gcs_raw=True, bigquery_raw_present=False))
+
+        executor.execute_plan(plan, [_artifact()])
+
+        assert len(provenance_store.artifacts) == 1  # unchanged: still only the seeded one
+        assert provenance_store.artifacts[0].provenance_id == seeded.provenance_id
+
+    def test_load_only_warehouse_provenance_links_to_existing_artifact(self, tmp_path: Path) -> None:
+        provenance_store = _InMemoryProvenanceStore()
+        seeded = _seed_artifact_provenance(provenance_store, _artifact())
+        executor, _ = _make_executor(tmp_path, provenance_store=provenance_store)
+        plan = _plan(_evidence(source_object="payments", logical_completion=False, valid_gcs_raw=True, bigquery_raw_present=False))
+
+        executor.execute_plan(plan, [_artifact()])
+
+        assert len(provenance_store.warehouse_loads) == 1
+        assert provenance_store.warehouse_loads[0].provenance_id == seeded.provenance_id
+
+    def test_load_only_missing_artifact_provenance_prevents_bigquery_load(self, tmp_path: Path) -> None:
+        provenance_store = _InMemoryProvenanceStore()  # nothing seeded
+        executor, store = _make_executor(tmp_path, provenance_store=provenance_store)
+        plan = _plan(_evidence(source_object="payments", logical_completion=False, valid_gcs_raw=True, bigquery_raw_present=False))
+
+        result = executor.execute_plan(plan, [_artifact()])
+
+        assert result.items[0].outcome is RecoveryExecutionOutcome.FAILED
+        assert executor.bigquery_loader._client.load_calls == []

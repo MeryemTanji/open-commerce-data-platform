@@ -54,6 +54,12 @@ from mercury_ingestion.common.operational_errors import OperationalError, Operat
 from mercury_ingestion.common.storage import StorageManager
 from mercury_ingestion.connectors.base import ConnectorRunResult
 from mercury_ingestion.orchestration.connector_builder import build_connector
+from mercury_ingestion.orchestration.provenance import (
+    ProvenanceStore,
+    RawArtifactProvenance,
+    WarehouseLoadProvenance,
+)
+from mercury_ingestion.orchestration.reconciliation import ReconciliationOutcome, ReconciliationResult, RecoveryReconciler
 from mercury_ingestion.orchestration.recovery import RecoveryAction, RecoveryPlan, RecoveryPlanItem
 from mercury_ingestion.orchestration.replay import DAILY_SOURCE_OBJECTS
 from mercury_ingestion.orchestration.state import (
@@ -134,11 +140,18 @@ class RecoveryItemExecutionResult:
     """The outcome of executing one ``RecoveryPlanItem``.
 
     Contains structural execution facts only -- ``ingestion_result``/
-    ``warehouse_result`` reuse Mercury's existing result types rather
-    than introducing a second, generic free-text error/display surface.
-    Any durable failure description belongs in
-    ``ReplayStateRecord.error_message`` (already ADR-011-safe), not
-    here.
+    ``warehouse_result``/``reconciliation_result`` reuse Mercury's
+    existing result types rather than introducing a second, generic
+    free-text error/display surface. Any durable failure description
+    belongs in ``ReplayStateRecord.error_message`` (already
+    ADR-011-safe) or ``ReconciliationResult.reason`` (a finite, safe
+    reason code), not here.
+
+    A ``RECONCILE`` item is the only case where ``reconciliation_result``
+    is non-``None`` -- and, notably, a confirmed reconciliation reports
+    ``outcome=SUCCEEDED`` even though no connector ran and no new
+    BigQuery load happened: it means physical completion has now been
+    *proven*, not that new physical work occurred.
     """
 
     source_object: str
@@ -146,6 +159,7 @@ class RecoveryItemExecutionResult:
     outcome: RecoveryExecutionOutcome
     ingestion_result: ConnectorRunResult | None = None
     warehouse_result: BigQueryLoadResult | None = None
+    reconciliation_result: ReconciliationResult | None = None
 
     def __post_init__(self) -> None:
         _require_non_blank(self.source_object, "source_object")
@@ -157,20 +171,40 @@ class RecoveryItemExecutionResult:
             raise TypeError("ingestion_result must be a ConnectorRunResult or None")
         if self.warehouse_result is not None and not isinstance(self.warehouse_result, BigQueryLoadResult):
             raise TypeError("warehouse_result must be a BigQueryLoadResult or None")
+        if self.reconciliation_result is not None and not isinstance(self.reconciliation_result, ReconciliationResult):
+            raise TypeError("reconciliation_result must be a ReconciliationResult or None")
 
         if self.planned_action is RecoveryAction.SKIP:
             self._require(self.outcome is RecoveryExecutionOutcome.SKIPPED, "SKIP must have outcome=SKIPPED")
             self._require_no_results("SKIP")
+            self._require(self.reconciliation_result is None, "SKIP must not carry a reconciliation_result")
 
-        elif self.planned_action in (RecoveryAction.RECONCILE, RecoveryAction.MANUAL_REVIEW):
+        elif self.planned_action is RecoveryAction.MANUAL_REVIEW:
+            self._require(self.outcome is RecoveryExecutionOutcome.BLOCKED, "MANUAL_REVIEW must have outcome=BLOCKED")
+            self._require_no_results("MANUAL_REVIEW")
+            self._require(self.reconciliation_result is None, "MANUAL_REVIEW must not carry a reconciliation_result")
+
+        elif self.planned_action is RecoveryAction.RECONCILE:
+            self._require_no_results("RECONCILE")
             self._require(
-                self.outcome is RecoveryExecutionOutcome.BLOCKED,
-                f"{self.planned_action.value} must have outcome=BLOCKED",
+                self.reconciliation_result is not None, "RECONCILE requires a reconciliation_result"
             )
-            self._require_no_results(self.planned_action.value)
+            if self.outcome is RecoveryExecutionOutcome.SUCCEEDED:
+                self._require(
+                    self.reconciliation_result.outcome is ReconciliationOutcome.CONFIRMED,
+                    "RECONCILE SUCCEEDED requires reconciliation_result.outcome=CONFIRMED",
+                )
+            elif self.outcome is RecoveryExecutionOutcome.BLOCKED:
+                self._require(
+                    self.reconciliation_result.outcome is ReconciliationOutcome.BLOCKED,
+                    "RECONCILE BLOCKED requires reconciliation_result.outcome=BLOCKED",
+                )
+            else:
+                raise ValueError("RECONCILE outcome must be SUCCEEDED or BLOCKED")
 
         elif self.planned_action is RecoveryAction.LOAD_ONLY:
             self._require(self.ingestion_result is None, "LOAD_ONLY must never carry an ingestion_result")
+            self._require(self.reconciliation_result is None, "LOAD_ONLY must not carry a reconciliation_result")
             if self.outcome is RecoveryExecutionOutcome.SUCCEEDED:
                 self._require(self.warehouse_result is not None, "LOAD_ONLY SUCCEEDED requires a warehouse_result")
             elif self.outcome is RecoveryExecutionOutcome.FAILED:
@@ -179,6 +213,7 @@ class RecoveryItemExecutionResult:
                 raise ValueError("LOAD_ONLY outcome must be SUCCEEDED or FAILED")
 
         elif self.planned_action is RecoveryAction.INGEST_AND_LOAD:
+            self._require(self.reconciliation_result is None, "INGEST_AND_LOAD must not carry a reconciliation_result")
             if self.outcome is RecoveryExecutionOutcome.SUCCEEDED:
                 self._require(
                     self.ingestion_result is not None and self.ingestion_result.metadata.status is IngestionStatus.SUCCESS,
@@ -294,6 +329,14 @@ class RecoveryExecutor:
     hard-codes a concrete backend (e.g. ``BigQueryReplayStateStore``) --
     only the generic ``ReplayStateStore``/``SourceDeliveryProvider``
     abstractions are depended on.
+
+    ``provenance_store`` follows the exact same required, unconditional
+    pattern (ADR-010 Phase 3C): ``INGEST_AND_LOAD`` and ``LOAD_ONLY``
+    both durably record artifact/warehouse-load provenance, exactly as
+    ``HistoricalReplayRunner`` now does. ``reconciler`` is a
+    ``RecoveryReconciler`` used only for ``RecoveryAction.RECONCILE``
+    items -- it performs no physical work of its own, only evidence
+    evaluation, and is never used for any other action.
     """
 
     def __init__(
@@ -302,6 +345,8 @@ class RecoveryExecutor:
         storage_manager: StorageManager,
         bigquery_loader: BigQueryRawLoader,
         replay_state_store: ReplayStateStore,
+        provenance_store: ProvenanceStore,
+        reconciler: RecoveryReconciler,
     ) -> None:
         if not isinstance(source_provider, SourceDeliveryProvider):
             raise TypeError("source_provider must be a SourceDeliveryProvider")
@@ -311,11 +356,17 @@ class RecoveryExecutor:
             raise TypeError("bigquery_loader must be a BigQueryRawLoader")
         if not isinstance(replay_state_store, ReplayStateStore):
             raise TypeError("replay_state_store must be a ReplayStateStore")
+        if not isinstance(provenance_store, ProvenanceStore):
+            raise TypeError("provenance_store must be a ProvenanceStore")
+        if not isinstance(reconciler, RecoveryReconciler):
+            raise TypeError("reconciler must be a RecoveryReconciler")
 
         self.source_provider = source_provider
         self.storage_manager = storage_manager
         self.bigquery_loader = bigquery_loader
         self.replay_state_store = replay_state_store
+        self.provenance_store = provenance_store
+        self.reconciler = reconciler
 
     def execute_plan(
         self, plan: RecoveryPlan, validated_raw_artifacts: Iterable[ValidatedRawArtifact] = ()
@@ -350,8 +401,10 @@ class RecoveryExecutor:
         for item in plan.items:
             if item.action is RecoveryAction.SKIP:
                 results.append(self._skip(item))
-            elif item.action in (RecoveryAction.RECONCILE, RecoveryAction.MANUAL_REVIEW):
+            elif item.action is RecoveryAction.MANUAL_REVIEW:
                 results.append(self._blocked(item))
+            elif item.action is RecoveryAction.RECONCILE:
+                results.append(self._reconcile(item, plan.delivery_date, run_id))
             elif item.action is RecoveryAction.LOAD_ONLY:
                 results.append(
                     self._execute_load_only(item, plan.delivery_date, run_id, artifacts_by_source[item.source_object])
@@ -483,6 +536,63 @@ class RecoveryExecutor:
             outcome=RecoveryExecutionOutcome.BLOCKED,
         )
 
+    def _reconcile(self, item: RecoveryPlanItem, delivery_date: date, run_id: str) -> RecoveryItemExecutionResult:
+        """Evaluate evidence for a RECONCILE item; confirm or block, but never execute physical work.
+
+        The reconciler itself performs no writes -- it only decides
+        ``CONFIRMED``/``BLOCKED``. On ``CONFIRMED``, this method performs
+        exactly one control-plane repair: appending ``SUCCESS | WAREHOUSE``
+        under this recovery invocation's own fresh ``run_id``/``event_id``.
+        No ``RUNNING | WAREHOUSE`` event is fabricated, since no new
+        warehouse operation was executed -- the new event means physical
+        completion has now been *proven*, not that BigQuery was loaded
+        again. On ``BLOCKED``, no replay-state event is appended at all.
+
+        A genuine inspection-infrastructure failure (as opposed to a
+        legitimate "evidence didn't match" observation) is never
+        converted into a normal ``BLOCKED`` result -- it is wrapped into
+        a safe ``RecoveryExecutionError`` and raised, aborting execution.
+        """
+        try:
+            reconciliation_result = self.reconciler.reconcile(delivery_date, item.source_object)
+        except Exception as exc:  # noqa: BLE001 - converted into a safe orchestration error below
+            raise RecoveryExecutionError(
+                f"reconciliation inspection failed for source_object={item.source_object!r} "
+                f"on {delivery_date.isoformat()}",
+                delivery_date=delivery_date,
+                source_object=item.source_object,
+            ) from exc
+
+        if reconciliation_result.outcome is ReconciliationOutcome.BLOCKED:
+            return RecoveryItemExecutionResult(
+                source_object=item.source_object,
+                planned_action=RecoveryAction.RECONCILE,
+                outcome=RecoveryExecutionOutcome.BLOCKED,
+                reconciliation_result=reconciliation_result,
+            )
+
+        completion_time = _now()
+        self._append_state(
+            ReplayStateRecord.success(
+                run_id=run_id,
+                event_id=str(uuid4()),
+                delivery_date=delivery_date,
+                source_object=item.source_object,
+                started_at=completion_time,
+                completed_at=completion_time,
+                recorded_at=completion_time,
+            ),
+            delivery_date=delivery_date,
+            source_object=item.source_object,
+        )
+
+        return RecoveryItemExecutionResult(
+            source_object=item.source_object,
+            planned_action=RecoveryAction.RECONCILE,
+            outcome=RecoveryExecutionOutcome.SUCCEEDED,
+            reconciliation_result=reconciliation_result,
+        )
+
     def _execute_load_only(
         self, item: RecoveryPlanItem, delivery_date: date, run_id: str, artifact: ValidatedRawArtifact
     ) -> RecoveryItemExecutionResult:
@@ -502,6 +612,42 @@ class RecoveryExecutor:
             delivery_date=delivery_date,
             source_object=source_object,
         )
+
+        # No new Raw artifact is created for LOAD_ONLY, so no new
+        # RawArtifactProvenance is written either -- instead, the
+        # existing artifact provenance must already be durably resolved
+        # by the supplied (delivery_date, source_object, gcs_uri). If it
+        # cannot be found, Mercury does not invent provenance -- it
+        # fails conservatively before ever touching BigQuery.
+        artifact_provenance = self.provenance_store.get_artifact_by_uri(delivery_date, source_object, artifact.gcs_uri)
+        if artifact_provenance is None:
+            completion_time = _now()
+            operational_error = OperationalError(
+                category=OperationalErrorCategory.WAREHOUSE_LOAD_FAILED,
+                component="RecoveryExecutor",
+                operation="load_only",
+                safe_message="No durable Raw artifact provenance found for supplied artifact",
+            )
+            self._append_state(
+                ReplayStateRecord.failed(
+                    run_id=run_id,
+                    event_id=str(uuid4()),
+                    delivery_date=delivery_date,
+                    source_object=source_object,
+                    stage=ReplayStage.WAREHOUSE,
+                    started_at=started_at,
+                    completed_at=completion_time,
+                    recorded_at=completion_time,
+                    error_message=operational_error.to_safe_string(),
+                ),
+                delivery_date=delivery_date,
+                source_object=source_object,
+            )
+            return RecoveryItemExecutionResult(
+                source_object=source_object,
+                planned_action=RecoveryAction.LOAD_ONLY,
+                outcome=RecoveryExecutionOutcome.FAILED,
+            )
 
         try:
             warehouse_result = self.bigquery_loader.load(
@@ -537,6 +683,22 @@ class RecoveryExecutor:
             )
 
         completion_time = _now()
+        self._append_warehouse_provenance(
+            WarehouseLoadProvenance(
+                load_id=str(uuid4()),
+                provenance_id=artifact_provenance.provenance_id,
+                run_id=run_id,
+                delivery_date=delivery_date,
+                source_object=source_object,
+                destination=warehouse_result.destination,
+                partition_date=warehouse_result.partition_date,
+                output_rows=warehouse_result.output_rows,
+                job_id=warehouse_result.job_id,
+                recorded_at=completion_time,
+            ),
+            delivery_date=delivery_date,
+            source_object=source_object,
+        )
         self._append_state(
             ReplayStateRecord.success(
                 run_id=run_id,
@@ -606,6 +768,24 @@ class RecoveryExecutor:
                 ingestion_result=connector_result,
             )
 
+        provenance_id = str(uuid4())
+        self._append_artifact_provenance(
+            RawArtifactProvenance(
+                provenance_id=provenance_id,
+                run_id=run_id,
+                delivery_date=delivery_date,
+                source_object=source_object,
+                ingestion_date=ingestion_date,
+                gcs_uri=connector_result.metadata.landing_path,
+                checksum=connector_result.metadata.checksum,
+                file_size_bytes=connector_result.metadata.file_size_bytes,
+                record_count=connector_result.metadata.record_count,
+                recorded_at=_now(),
+            ),
+            delivery_date=delivery_date,
+            source_object=source_object,
+        )
+
         self._append_state(
             ReplayStateRecord.running(
                 run_id=run_id,
@@ -657,6 +837,22 @@ class RecoveryExecutor:
             )
 
         completion_time = _now()
+        self._append_warehouse_provenance(
+            WarehouseLoadProvenance(
+                load_id=str(uuid4()),
+                provenance_id=provenance_id,
+                run_id=run_id,
+                delivery_date=delivery_date,
+                source_object=source_object,
+                destination=warehouse_result.destination,
+                partition_date=warehouse_result.partition_date,
+                output_rows=warehouse_result.output_rows,
+                job_id=warehouse_result.job_id,
+                recorded_at=completion_time,
+            ),
+            delivery_date=delivery_date,
+            source_object=source_object,
+        )
         self._append_state(
             ReplayStateRecord.success(
                 run_id=run_id,
@@ -677,6 +873,45 @@ class RecoveryExecutor:
             ingestion_result=connector_result,
             warehouse_result=warehouse_result,
         )
+
+    def _append_artifact_provenance(
+        self, record: RawArtifactProvenance, *, delivery_date: date, source_object: str
+    ) -> None:
+        """Persist one Raw artifact provenance record, aborting execution if that fails.
+
+        The GCS artifact it describes already exists and is never
+        rolled back, but processing must not continue past a source
+        whose provenance Mercury failed to durably record.
+        """
+        try:
+            self.provenance_store.append_artifact(record)
+        except Exception as exc:
+            raise RecoveryExecutionError(
+                f"failed to persist artifact provenance for source_object={source_object!r} "
+                f"on {delivery_date.isoformat()}",
+                delivery_date=delivery_date,
+                source_object=source_object,
+            ) from exc
+
+    def _append_warehouse_provenance(
+        self, record: WarehouseLoadProvenance, *, delivery_date: date, source_object: str
+    ) -> None:
+        """Persist one warehouse-load provenance record, aborting execution if that fails.
+
+        The BigQuery data it describes already exists and is never
+        rolled back or reloaded, but ``SUCCESS | WAREHOUSE`` must not be
+        written -- without durable warehouse provenance, a later
+        reconciliation could never prove this load actually happened.
+        """
+        try:
+            self.provenance_store.append_warehouse_load(record)
+        except Exception as exc:
+            raise RecoveryExecutionError(
+                f"failed to persist warehouse load provenance for source_object={source_object!r} "
+                f"on {delivery_date.isoformat()}",
+                delivery_date=delivery_date,
+                source_object=source_object,
+            ) from exc
 
     def _append_state(self, record: ReplayStateRecord, *, delivery_date: date, source_object: str) -> None:
         """Persist one replay-state event, failing execution clearly if that fails.

@@ -29,6 +29,11 @@ import pytest
 from google.api_core import exceptions as gcs_exceptions
 
 from mercury_ingestion.common.storage import LocalStorageManager, StorageManager, StorageResult
+from mercury_ingestion.orchestration.provenance import (
+    ProvenanceStore,
+    RawArtifactProvenance,
+    WarehouseLoadProvenance,
+)
 from mercury_ingestion.orchestration.replay import (
     CONNECTOR_MAP,
     DAILY_SOURCE_OBJECTS,
@@ -258,6 +263,51 @@ class _InMemoryReplayStateStore(ReplayStateStore):
         return tuple(by_source[key] for key in sorted(by_source))
 
 
+class _InMemoryProvenanceStore(ProvenanceStore):
+    """A controllable, fully offline ProvenanceStore for orchestration tests."""
+
+    def __init__(self) -> None:
+        self.artifacts: list[RawArtifactProvenance] = []
+        self.warehouse_loads: list[WarehouseLoadProvenance] = []
+        self.fail_artifact_when: Callable[[RawArtifactProvenance], bool] | None = None
+        self.fail_warehouse_load_when: Callable[[WarehouseLoadProvenance], bool] | None = None
+
+    def append_artifact(self, record: RawArtifactProvenance) -> None:
+        if self.fail_artifact_when is not None and self.fail_artifact_when(record):
+            raise RuntimeError(f"simulated provenance-store failure for artifact {record.source_object}")
+        self.artifacts.append(record)
+
+    def append_warehouse_load(self, record: WarehouseLoadProvenance) -> None:
+        if self.fail_warehouse_load_when is not None and self.fail_warehouse_load_when(record):
+            raise RuntimeError(f"simulated provenance-store failure for warehouse load {record.source_object}")
+        self.warehouse_loads.append(record)
+
+    def get_artifact(self, provenance_id: str) -> RawArtifactProvenance | None:
+        return next((a for a in self.artifacts if a.provenance_id == provenance_id), None)
+
+    def get_artifact_history(self, delivery_date: date, source_object: str) -> tuple[RawArtifactProvenance, ...]:
+        matches = [a for a in self.artifacts if a.delivery_date == delivery_date and a.source_object == source_object]
+        return tuple(sorted(matches, key=lambda a: a.recorded_at))
+
+    def get_artifact_by_uri(self, delivery_date: date, source_object: str, gcs_uri: str) -> RawArtifactProvenance | None:
+        matches = [
+            a
+            for a in self.artifacts
+            if a.delivery_date == delivery_date and a.source_object == source_object and a.gcs_uri == gcs_uri
+        ]
+        return max(matches, key=lambda a: a.recorded_at) if matches else None
+
+    def get_warehouse_load_history(self, delivery_date: date, source_object: str) -> tuple[WarehouseLoadProvenance, ...]:
+        matches = [
+            w for w in self.warehouse_loads if w.delivery_date == delivery_date and w.source_object == source_object
+        ]
+        return tuple(sorted(matches, key=lambda w: w.recorded_at))
+
+    def get_latest_warehouse_load(self, delivery_date: date, source_object: str) -> WarehouseLoadProvenance | None:
+        history = self.get_warehouse_load_history(delivery_date, source_object)
+        return history[-1] if history else None
+
+
 def _write_source_files(tmp_path: Path) -> dict[str, Path]:
     """Write one minimal, valid source CSV per Mercury source object."""
     source_dir = tmp_path / "sources"
@@ -318,20 +368,29 @@ def _make_runner(
     *,
     initial_batch: SourceDeliveryBatch | None = None,
     daily_batches: dict[date, SourceDeliveryBatch] | None = None,
-) -> tuple[HistoricalReplayRunner, _StubSourceProvider, _FakeGcsStorageManager, BigQueryRawLoader, _InMemoryReplayStateStore]:
+) -> tuple[
+    HistoricalReplayRunner,
+    _StubSourceProvider,
+    _FakeGcsStorageManager,
+    BigQueryRawLoader,
+    _InMemoryReplayStateStore,
+    _InMemoryProvenanceStore,
+]:
     provider = _StubSourceProvider(initial_batch=initial_batch)
     for day, batch in (daily_batches or {}).items():
         provider.set_daily_batch(day, batch)
     storage_manager = _FakeGcsStorageManager(tmp_path / "gcs_bucket")
     bigquery_loader = _make_bigquery_loader()
     replay_state_store = _InMemoryReplayStateStore()
+    provenance_store = _InMemoryProvenanceStore()
     runner = HistoricalReplayRunner(
         source_provider=provider,
         storage_manager=storage_manager,
         bigquery_loader=bigquery_loader,
         replay_state_store=replay_state_store,
+        provenance_store=provenance_store,
     )
-    return runner, provider, storage_manager, bigquery_loader, replay_state_store
+    return runner, provider, storage_manager, bigquery_loader, replay_state_store, provenance_store
 
 
 class TestConstruction:
@@ -347,6 +406,7 @@ class TestConstruction:
                 storage_manager=LocalStorageManager(tmp_path / "landing"),
                 bigquery_loader=_make_bigquery_loader(),
                 replay_state_store=_InMemoryReplayStateStore(),
+                provenance_store=_InMemoryProvenanceStore(),
             )
 
     def test_rejects_non_storage_manager(self, tmp_path: Path) -> None:
@@ -356,6 +416,7 @@ class TestConstruction:
                 storage_manager=object(),  # type: ignore[arg-type]
                 bigquery_loader=_make_bigquery_loader(),
                 replay_state_store=_InMemoryReplayStateStore(),
+                provenance_store=_InMemoryProvenanceStore(),
             )
 
     def test_rejects_non_bigquery_loader(self, tmp_path: Path) -> None:
@@ -365,6 +426,7 @@ class TestConstruction:
                 storage_manager=LocalStorageManager(tmp_path / "landing"),
                 bigquery_loader=object(),  # type: ignore[arg-type]
                 replay_state_store=_InMemoryReplayStateStore(),
+                provenance_store=_InMemoryProvenanceStore(),
             )
 
     def test_rejects_non_replay_state_store(self, tmp_path: Path) -> None:
@@ -374,10 +436,22 @@ class TestConstruction:
                 storage_manager=LocalStorageManager(tmp_path / "landing"),
                 bigquery_loader=_make_bigquery_loader(),
                 replay_state_store=object(),  # type: ignore[arg-type]
+                provenance_store=_InMemoryProvenanceStore(),
             )
 
+    def test_rejects_non_provenance_store(self, tmp_path: Path) -> None:
+        with pytest.raises(TypeError):
+            HistoricalReplayRunner(
+                source_provider=_StubSourceProvider(),
+                storage_manager=LocalStorageManager(tmp_path / "landing"),
+                bigquery_loader=_make_bigquery_loader(),
+                replay_state_store=_InMemoryReplayStateStore(),
+                provenance_store=object(),  # type: ignore[arg-type]
+            )
+
+
     def test_accepts_generic_replay_state_store_not_just_bigquery_backed(self, tmp_path: Path) -> None:
-        runner, provider, storage_manager, bigquery_loader, replay_state_store = _make_runner(tmp_path)
+        runner, provider, storage_manager, bigquery_loader, replay_state_store, provenance_store = _make_runner(tmp_path)
 
         from mercury_ingestion.orchestration.bigquery_replay_state import BigQueryReplayStateStore
 
@@ -397,7 +471,7 @@ class TestConstruction:
     def test_does_not_create_cloud_clients_itself(self, tmp_path: Path) -> None:
         # Constructing the runner must not touch the BigQuery client at
         # all -- only BigQueryRawLoader's own constructor does that.
-        runner, provider, storage_manager, bigquery_loader, replay_state_store = _make_runner(tmp_path)
+        runner, provider, storage_manager, bigquery_loader, replay_state_store, provenance_store = _make_runner(tmp_path)
 
         assert bigquery_loader._client.load_calls == []
 
@@ -435,7 +509,7 @@ class TestRunDayOrder:
     def test_bigquery_not_called_before_ingestion_completes(self, tmp_path: Path) -> None:
         paths = _write_source_files(tmp_path)
         day = date(2017, 5, 1)
-        runner, provider, storage_manager, bigquery_loader, replay_state_store = _make_runner(
+        runner, provider, storage_manager, bigquery_loader, replay_state_store, provenance_store = _make_runner(
             tmp_path, daily_batches={day: _daily_batch(paths, day)}
         )
 
@@ -446,7 +520,7 @@ class TestRunDayOrder:
     def test_provider_called_before_bigquery(self, tmp_path: Path) -> None:
         paths = _write_source_files(tmp_path)
         day = date(2017, 5, 1)
-        runner, provider, storage_manager, bigquery_loader, replay_state_store = _make_runner(
+        runner, provider, storage_manager, bigquery_loader, replay_state_store, provenance_store = _make_runner(
             tmp_path, daily_batches={day: _daily_batch(paths, day)}
         )
 
@@ -459,7 +533,7 @@ class TestRunDayOrder:
         # every expected source's ingestion attempt has completed.
         paths = _write_source_files(tmp_path)
         day = date(2017, 5, 1)
-        runner, provider, storage_manager, bigquery_loader, replay_state_store = _make_runner(
+        runner, provider, storage_manager, bigquery_loader, replay_state_store, provenance_store = _make_runner(
             tmp_path, daily_batches={day: _daily_batch(paths, day)}
         )
 
@@ -474,7 +548,7 @@ class TestRunDayOrder:
 class TestRunInitialLoad:
     def test_four_master_sources_flow_through_connectors_then_bigquery(self, tmp_path: Path) -> None:
         paths = _write_source_files(tmp_path)
-        runner, provider, storage_manager, bigquery_loader, replay_state_store = _make_runner(
+        runner, provider, storage_manager, bigquery_loader, replay_state_store, provenance_store = _make_runner(
             tmp_path, initial_batch=_initial_batch(paths)
         )
 
@@ -485,7 +559,7 @@ class TestRunInitialLoad:
 
     def test_destinations_are_unpartitioned(self, tmp_path: Path) -> None:
         paths = _write_source_files(tmp_path)
-        runner, provider, storage_manager, bigquery_loader, replay_state_store = _make_runner(
+        runner, provider, storage_manager, bigquery_loader, replay_state_store, provenance_store = _make_runner(
             tmp_path, initial_batch=_initial_batch(paths)
         )
 
@@ -498,7 +572,7 @@ class TestRunInitialLoad:
         # ADR-010's immediate scope is historical incremental (daily)
         # replay -- run_initial_load() is deliberately untouched.
         paths = _write_source_files(tmp_path)
-        runner, provider, storage_manager, bigquery_loader, replay_state_store = _make_runner(
+        runner, provider, storage_manager, bigquery_loader, replay_state_store, provenance_store = _make_runner(
             tmp_path, initial_batch=_initial_batch(paths)
         )
 
@@ -511,7 +585,7 @@ class TestLandingPathHandoff:
     def test_bigquery_receives_exact_metadata_landing_path(self, tmp_path: Path) -> None:
         paths = _write_source_files(tmp_path)
         day = date(2017, 5, 1)
-        runner, provider, storage_manager, bigquery_loader, replay_state_store = _make_runner(
+        runner, provider, storage_manager, bigquery_loader, replay_state_store, provenance_store = _make_runner(
             tmp_path, daily_batches={day: _daily_batch(paths, day)}
         )
 
@@ -529,7 +603,7 @@ class TestDateHandoff:
     def test_exact_delivery_date_passed_to_ingestion_and_bigquery(self, tmp_path: Path) -> None:
         paths = _write_source_files(tmp_path)
         day = date(2017, 5, 3)
-        runner, provider, storage_manager, bigquery_loader, replay_state_store = _make_runner(
+        runner, provider, storage_manager, bigquery_loader, replay_state_store, provenance_store = _make_runner(
             tmp_path, daily_batches={day: _daily_batch(paths, day)}
         )
 
@@ -569,7 +643,7 @@ class TestDateHandoff:
             delivery_date=delivery_date,
             ingestion_date=ingestion_date,
         )
-        runner, provider, storage_manager, bigquery_loader, replay_state_store = _make_runner(
+        runner, provider, storage_manager, bigquery_loader, replay_state_store, provenance_store = _make_runner(
             tmp_path, daily_batches={delivery_date: batch}
         )
 
@@ -601,7 +675,7 @@ class TestBatchMembershipValidation:
             ),
             delivery_date=day,
         )
-        runner, provider, storage_manager, bigquery_loader, replay_state_store = _make_runner(
+        runner, provider, storage_manager, bigquery_loader, replay_state_store, provenance_store = _make_runner(
             tmp_path, daily_batches={day: incomplete_batch}
         )
 
@@ -628,7 +702,7 @@ class TestBatchMembershipValidation:
             ),
             delivery_date=day,
         )
-        runner, provider, storage_manager, bigquery_loader, replay_state_store = _make_runner(
+        runner, provider, storage_manager, bigquery_loader, replay_state_store, provenance_store = _make_runner(
             tmp_path, daily_batches={day: extra_batch}
         )
 
@@ -644,7 +718,7 @@ class TestBatchMembershipValidation:
     def test_daily_exact_membership_proceeds_normally(self, tmp_path: Path) -> None:
         paths = _write_source_files(tmp_path)
         day = date(2017, 5, 1)
-        runner, provider, storage_manager, bigquery_loader, replay_state_store = _make_runner(
+        runner, provider, storage_manager, bigquery_loader, replay_state_store, provenance_store = _make_runner(
             tmp_path, daily_batches={day: _daily_batch(paths, day)}
         )
 
@@ -664,7 +738,7 @@ class TestBatchMembershipValidation:
             ),
             delivery_date=None,
         )
-        runner, provider, storage_manager, bigquery_loader, replay_state_store = _make_runner(
+        runner, provider, storage_manager, bigquery_loader, replay_state_store, provenance_store = _make_runner(
             tmp_path, initial_batch=incomplete_batch
         )
 
@@ -687,7 +761,7 @@ class TestBatchMembershipValidation:
             ),
             delivery_date=None,
         )
-        runner, provider, storage_manager, bigquery_loader, replay_state_store = _make_runner(
+        runner, provider, storage_manager, bigquery_loader, replay_state_store, provenance_store = _make_runner(
             tmp_path, initial_batch=extra_batch
         )
 
@@ -709,7 +783,7 @@ class TestBatchMembershipValidation:
             ),
             delivery_date=None,
         )
-        runner, provider, storage_manager, bigquery_loader, replay_state_store = _make_runner(
+        runner, provider, storage_manager, bigquery_loader, replay_state_store, provenance_store = _make_runner(
             tmp_path, initial_batch=incomplete_batch
         )
         ingestion_date = date(2020, 1, 1)
@@ -722,7 +796,7 @@ class TestBatchMembershipValidation:
 
 class TestUnsupportedSourceObject:
     def test_build_connector_fails_clearly_for_unsupported_source(self, tmp_path: Path) -> None:
-        runner, provider, storage_manager, bigquery_loader, replay_state_store = _make_runner(tmp_path)
+        runner, provider, storage_manager, bigquery_loader, replay_state_store, provenance_store = _make_runner(tmp_path)
         bogus_delivery = SourceDelivery(
             source_object="not_a_real_source", path=tmp_path / "x.csv", delivery_date=None, record_count=0
         )
@@ -737,7 +811,7 @@ class TestOneSuccessfulDateEventSequence:
     def test_each_source_produces_exactly_three_events(self, tmp_path: Path) -> None:
         paths = _write_source_files(tmp_path)
         day = date(2017, 5, 1)
-        runner, provider, storage_manager, bigquery_loader, replay_state_store = _make_runner(
+        runner, provider, storage_manager, bigquery_loader, replay_state_store, provenance_store = _make_runner(
             tmp_path, daily_batches={day: _daily_batch(paths, day)}
         )
 
@@ -756,7 +830,7 @@ class TestOneSuccessfulDateEventSequence:
     def test_all_events_share_one_run_id(self, tmp_path: Path) -> None:
         paths = _write_source_files(tmp_path)
         day = date(2017, 5, 1)
-        runner, provider, storage_manager, bigquery_loader, replay_state_store = _make_runner(
+        runner, provider, storage_manager, bigquery_loader, replay_state_store, provenance_store = _make_runner(
             tmp_path, daily_batches={day: _daily_batch(paths, day)}
         )
 
@@ -768,7 +842,7 @@ class TestOneSuccessfulDateEventSequence:
     def test_every_event_id_is_distinct(self, tmp_path: Path) -> None:
         paths = _write_source_files(tmp_path)
         day = date(2017, 5, 1)
-        runner, provider, storage_manager, bigquery_loader, replay_state_store = _make_runner(
+        runner, provider, storage_manager, bigquery_loader, replay_state_store, provenance_store = _make_runner(
             tmp_path, daily_batches={day: _daily_batch(paths, day)}
         )
 
@@ -780,7 +854,7 @@ class TestOneSuccessfulDateEventSequence:
     def test_all_events_share_the_delivery_date(self, tmp_path: Path) -> None:
         paths = _write_source_files(tmp_path)
         day = date(2017, 5, 1)
-        runner, provider, storage_manager, bigquery_loader, replay_state_store = _make_runner(
+        runner, provider, storage_manager, bigquery_loader, replay_state_store, provenance_store = _make_runner(
             tmp_path, daily_batches={day: _daily_batch(paths, day)}
         )
 
@@ -791,7 +865,7 @@ class TestOneSuccessfulDateEventSequence:
     def test_all_success_events_are_warehouse_stage(self, tmp_path: Path) -> None:
         paths = _write_source_files(tmp_path)
         day = date(2017, 5, 1)
-        runner, provider, storage_manager, bigquery_loader, replay_state_store = _make_runner(
+        runner, provider, storage_manager, bigquery_loader, replay_state_store, provenance_store = _make_runner(
             tmp_path, daily_batches={day: _daily_batch(paths, day)}
         )
 
@@ -804,7 +878,7 @@ class TestOneSuccessfulDateEventSequence:
     def test_date_completeness_derives_true(self, tmp_path: Path) -> None:
         paths = _write_source_files(tmp_path)
         day = date(2017, 5, 1)
-        runner, provider, storage_manager, bigquery_loader, replay_state_store = _make_runner(
+        runner, provider, storage_manager, bigquery_loader, replay_state_store, provenance_store = _make_runner(
             tmp_path, daily_batches={day: _daily_batch(paths, day)}
         )
 
@@ -818,7 +892,7 @@ class TestOneSuccessfulDateEventSequence:
     def test_connector_metadata_preserved(self, tmp_path: Path) -> None:
         paths = _write_source_files(tmp_path)
         day = date(2017, 5, 1)
-        runner, provider, storage_manager, bigquery_loader, replay_state_store = _make_runner(
+        runner, provider, storage_manager, bigquery_loader, replay_state_store, provenance_store = _make_runner(
             tmp_path, daily_batches={day: _daily_batch(paths, day)}
         )
 
@@ -832,7 +906,7 @@ class TestOneSuccessfulDateEventSequence:
     def test_all_four_warehouse_results_preserved(self, tmp_path: Path) -> None:
         paths = _write_source_files(tmp_path)
         day = date(2017, 5, 1)
-        runner, provider, storage_manager, bigquery_loader, replay_state_store = _make_runner(
+        runner, provider, storage_manager, bigquery_loader, replay_state_store, provenance_store = _make_runner(
             tmp_path, daily_batches={day: _daily_batch(paths, day)}
         )
 
@@ -840,6 +914,156 @@ class TestOneSuccessfulDateEventSequence:
 
         assert len(result.warehouse_results) == 4
         assert {w.source_object for w in result.warehouse_results} == DAILY_SOURCE_OBJECTS
+
+
+class TestProvenanceIntegration:
+    """ADR-010 Phase 3C: RawArtifactProvenance/WarehouseLoadProvenance persistence."""
+
+    def test_one_artifact_and_one_warehouse_load_record_per_source(self, tmp_path: Path) -> None:
+        paths = _write_source_files(tmp_path)
+        day = date(2017, 5, 1)
+        runner, provider, storage_manager, bigquery_loader, replay_state_store, provenance_store = _make_runner(
+            tmp_path, daily_batches={day: _daily_batch(paths, day)}
+        )
+
+        runner.run_day(day)
+
+        assert len(provenance_store.artifacts) == 4
+        assert len(provenance_store.warehouse_loads) == 4
+        assert {a.source_object for a in provenance_store.artifacts} == DAILY_SOURCE_OBJECTS
+        assert {w.source_object for w in provenance_store.warehouse_loads} == DAILY_SOURCE_OBJECTS
+
+    def test_warehouse_load_links_to_the_correct_artifact_provenance_id(self, tmp_path: Path) -> None:
+        paths = _write_source_files(tmp_path)
+        day = date(2017, 5, 1)
+        runner, provider, storage_manager, bigquery_loader, replay_state_store, provenance_store = _make_runner(
+            tmp_path, daily_batches={day: _daily_batch(paths, day)}
+        )
+
+        runner.run_day(day)
+
+        for source_object in DAILY_SOURCE_OBJECTS:
+            artifact = next(a for a in provenance_store.artifacts if a.source_object == source_object)
+            load = next(w for w in provenance_store.warehouse_loads if w.source_object == source_object)
+            assert load.provenance_id == artifact.provenance_id
+
+    def test_provenance_records_share_the_replay_run_id(self, tmp_path: Path) -> None:
+        paths = _write_source_files(tmp_path)
+        day = date(2017, 5, 1)
+        runner, provider, storage_manager, bigquery_loader, replay_state_store, provenance_store = _make_runner(
+            tmp_path, daily_batches={day: _daily_batch(paths, day)}
+        )
+
+        runner.run_day(day)
+
+        replay_run_ids = {e.run_id for e in replay_state_store.events}
+        provenance_run_ids = {a.run_id for a in provenance_store.artifacts} | {
+            w.run_id for w in provenance_store.warehouse_loads
+        }
+        assert replay_run_ids == provenance_run_ids
+        assert len(replay_run_ids) == 1
+
+    def test_artifact_provenance_records_delivery_and_ingestion_date_separately(self, tmp_path: Path) -> None:
+        paths = _write_source_files(tmp_path)
+        day = date(2017, 5, 19)
+        ingestion_date = date(2017, 5, 20)
+        batch = SourceDeliveryBatch(
+            deliveries=(
+                SourceDelivery(source_object="orders", path=paths["orders"], delivery_date=day, record_count=1),
+                SourceDelivery(source_object="order_items", path=paths["order_items"], delivery_date=day, record_count=1),
+                SourceDelivery(source_object="payments", path=paths["payments"], delivery_date=day, record_count=1),
+                SourceDelivery(source_object="reviews", path=paths["reviews"], delivery_date=day, record_count=1),
+            ),
+            delivery_date=day,
+            ingestion_date=ingestion_date,
+        )
+        runner, provider, storage_manager, bigquery_loader, replay_state_store, provenance_store = _make_runner(
+            tmp_path, daily_batches={day: batch}
+        )
+
+        runner.run_day(day)
+
+        assert all(a.delivery_date == day for a in provenance_store.artifacts)
+        assert all(a.ingestion_date == ingestion_date for a in provenance_store.artifacts)
+        assert all(w.delivery_date == day and w.partition_date == day for w in provenance_store.warehouse_loads)
+
+    def test_exact_provenance_and_state_ordering(self, tmp_path: Path) -> None:
+        """Verifies: RUNNING|INGESTION, GCS landing (implicit), RawArtifactProvenance
+        append, RUNNING|WAREHOUSE, BigQuery load (implicit), WarehouseLoadProvenance
+        append, SUCCESS|WAREHOUSE -- using each fake's own append order as a timeline.
+        """
+        paths = _write_source_files(tmp_path)
+        day = date(2017, 5, 1)
+        runner, provider, storage_manager, bigquery_loader, replay_state_store, provenance_store = _make_runner(
+            tmp_path, daily_batches={day: _daily_batch(paths, day)}
+        )
+        order: list[str] = []
+
+        original_append_state = replay_state_store.append
+        original_append_artifact = provenance_store.append_artifact
+        original_append_warehouse = provenance_store.append_warehouse_load
+
+        def _tracked_state(record):
+            order.append(f"state:{record.status.value}|{record.stage.value}")
+            return original_append_state(record)
+
+        def _tracked_artifact(record):
+            order.append("artifact_provenance")
+            return original_append_artifact(record)
+
+        def _tracked_warehouse(record):
+            order.append("warehouse_provenance")
+            return original_append_warehouse(record)
+
+        replay_state_store.append = _tracked_state
+        provenance_store.append_artifact = _tracked_artifact
+        provenance_store.append_warehouse_load = _tracked_warehouse
+
+        runner.run_day(day)
+
+        orders_events = [event for event in order if event != "artifact_provenance" and event != "warehouse_provenance"]
+        # Extract just the orders source's own timeline by relying on strict
+        # per-source ordering within the attempt-all-safe-work loop: for a
+        # single source, its four events must appear in this exact relative
+        # order among all recorded events.
+        combined = order
+        first_running_ingestion = combined.index("state:running|ingestion")
+        artifact_idx = combined.index("artifact_provenance")
+        first_running_warehouse = combined.index("state:running|warehouse")
+        warehouse_idx = combined.index("warehouse_provenance")
+        first_success = combined.index("state:success|warehouse")
+
+        assert first_running_ingestion < artifact_idx < first_running_warehouse < warehouse_idx < first_success
+
+    def test_artifact_provenance_failure_aborts_before_bigquery_work(self, tmp_path: Path) -> None:
+        paths = _write_source_files(tmp_path)
+        day = date(2017, 5, 1)
+        runner, provider, storage_manager, bigquery_loader, replay_state_store, provenance_store = _make_runner(
+            tmp_path, daily_batches={day: _daily_batch(paths, day)}
+        )
+        provenance_store.fail_artifact_when = lambda record: True
+
+        with pytest.raises(HistoricalReplayError):
+            runner.run_day(day)
+
+        assert bigquery_loader._client.load_calls == []
+        assert not any(e.stage is ReplayStage.WAREHOUSE for e in replay_state_store.events)
+
+    def test_warehouse_provenance_failure_prevents_success_state(self, tmp_path: Path) -> None:
+        paths = _write_source_files(tmp_path)
+        day = date(2017, 5, 1)
+        runner, provider, storage_manager, bigquery_loader, replay_state_store, provenance_store = _make_runner(
+            tmp_path, daily_batches={day: _daily_batch(paths, day)}
+        )
+        provenance_store.fail_warehouse_load_when = lambda record: True
+
+        with pytest.raises(HistoricalReplayError):
+            runner.run_day(day)
+
+        # BigQuery load itself already happened (data remains, per ADR-010
+        # Phase 3C design) but no SUCCESS state was ever written.
+        assert bigquery_loader._client.load_calls != []
+        assert not any(e.status is ReplayStatus.SUCCESS for e in replay_state_store.events)
 
 
 class TestIngestionFailureContinuesSameDateWork:
@@ -853,7 +1077,7 @@ class TestIngestionFailureContinuesSameDateWork:
         paths = _write_source_files(tmp_path)
         day = date(2017, 5, 1)
         broken_batch = _daily_batch_with_broken_source(paths, day, "payments", tmp_path)
-        runner, provider, storage_manager, bigquery_loader, replay_state_store = _make_runner(
+        runner, provider, storage_manager, bigquery_loader, replay_state_store, provenance_store = _make_runner(
             tmp_path, daily_batches={day: broken_batch}
         )
 
@@ -868,7 +1092,7 @@ class TestIngestionFailureContinuesSameDateWork:
         paths = _write_source_files(tmp_path)
         day = date(2017, 5, 1)
         broken_batch = _daily_batch_with_broken_source(paths, day, "payments", tmp_path)
-        runner, provider, storage_manager, bigquery_loader, replay_state_store = _make_runner(
+        runner, provider, storage_manager, bigquery_loader, replay_state_store, provenance_store = _make_runner(
             tmp_path, daily_batches={day: broken_batch}
         )
 
@@ -883,7 +1107,7 @@ class TestIngestionFailureContinuesSameDateWork:
         paths = _write_source_files(tmp_path)
         day = date(2017, 5, 1)
         broken_batch = _daily_batch_with_broken_source(paths, day, "payments", tmp_path)
-        runner, provider, storage_manager, bigquery_loader, replay_state_store = _make_runner(
+        runner, provider, storage_manager, bigquery_loader, replay_state_store, provenance_store = _make_runner(
             tmp_path, daily_batches={day: broken_batch}
         )
 
@@ -900,7 +1124,7 @@ class TestIngestionFailureContinuesSameDateWork:
         paths = _write_source_files(tmp_path)
         day = date(2017, 5, 1)
         broken_batch = _daily_batch_with_broken_source(paths, day, "payments", tmp_path)
-        runner, provider, storage_manager, bigquery_loader, replay_state_store = _make_runner(
+        runner, provider, storage_manager, bigquery_loader, replay_state_store, provenance_store = _make_runner(
             tmp_path, daily_batches={day: broken_batch}
         )
 
@@ -914,7 +1138,7 @@ class TestIngestionFailureContinuesSameDateWork:
         paths = _write_source_files(tmp_path)
         day = date(2017, 5, 1)
         broken_batch = _daily_batch_with_broken_source(paths, day, "payments", tmp_path)
-        runner, provider, storage_manager, bigquery_loader, replay_state_store = _make_runner(
+        runner, provider, storage_manager, bigquery_loader, replay_state_store, provenance_store = _make_runner(
             tmp_path, daily_batches={day: broken_batch}
         )
 
@@ -931,7 +1155,7 @@ class TestIngestionFailureContinuesSameDateWork:
         paths = _write_source_files(tmp_path)
         day = date(2017, 5, 1)
         broken_batch = _daily_batch_with_broken_source(paths, day, "payments", tmp_path)
-        runner, provider, storage_manager, bigquery_loader, replay_state_store = _make_runner(
+        runner, provider, storage_manager, bigquery_loader, replay_state_store, provenance_store = _make_runner(
             tmp_path, daily_batches={day: broken_batch}
         )
 
@@ -946,7 +1170,7 @@ class TestIngestionFailureContinuesSameDateWork:
         paths = _write_source_files(tmp_path)
         day = date(2017, 5, 1)
         broken_batch = _daily_batch_with_broken_source(paths, day, "payments", tmp_path)
-        runner, provider, storage_manager, bigquery_loader, replay_state_store = _make_runner(
+        runner, provider, storage_manager, bigquery_loader, replay_state_store, provenance_store = _make_runner(
             tmp_path, daily_batches={day: broken_batch}
         )
 
@@ -967,7 +1191,7 @@ class TestWarehouseFailureContinuesSameDateWork:
     def test_reviews_warehouse_load_still_occurs_after_payments_warehouse_fails(self, tmp_path: Path) -> None:
         paths = _write_source_files(tmp_path)
         day = date(2017, 5, 1)
-        runner, provider, storage_manager, bigquery_loader, replay_state_store = _make_runner(
+        runner, provider, storage_manager, bigquery_loader, replay_state_store, provenance_store = _make_runner(
             tmp_path, daily_batches={day: _daily_batch(paths, day)}
         )
         bigquery_loader._client.raise_for_destination["mercury-data-platform-dev.raw.payments$20170501"] = (
@@ -984,7 +1208,7 @@ class TestWarehouseFailureContinuesSameDateWork:
     def test_payments_state_sequence_is_running_running_failed(self, tmp_path: Path) -> None:
         paths = _write_source_files(tmp_path)
         day = date(2017, 5, 1)
-        runner, provider, storage_manager, bigquery_loader, replay_state_store = _make_runner(
+        runner, provider, storage_manager, bigquery_loader, replay_state_store, provenance_store = _make_runner(
             tmp_path, daily_batches={day: _daily_batch(paths, day)}
         )
         bigquery_loader._client.raise_for_destination["mercury-data-platform-dev.raw.payments$20170501"] = (
@@ -1004,7 +1228,7 @@ class TestWarehouseFailureContinuesSameDateWork:
     def test_reviews_ends_success(self, tmp_path: Path) -> None:
         paths = _write_source_files(tmp_path)
         day = date(2017, 5, 1)
-        runner, provider, storage_manager, bigquery_loader, replay_state_store = _make_runner(
+        runner, provider, storage_manager, bigquery_loader, replay_state_store, provenance_store = _make_runner(
             tmp_path, daily_batches={day: _daily_batch(paths, day)}
         )
         bigquery_loader._client.raise_for_destination["mercury-data-platform-dev.raw.payments$20170501"] = (
@@ -1021,7 +1245,7 @@ class TestWarehouseFailureContinuesSameDateWork:
     def test_previous_successes_remain_nothing_rolled_back(self, tmp_path: Path) -> None:
         paths = _write_source_files(tmp_path)
         day = date(2017, 5, 1)
-        runner, provider, storage_manager, bigquery_loader, replay_state_store = _make_runner(
+        runner, provider, storage_manager, bigquery_loader, replay_state_store, provenance_store = _make_runner(
             tmp_path, daily_batches={day: _daily_batch(paths, day)}
         )
         bigquery_loader._client.raise_for_destination["mercury-data-platform-dev.raw.payments$20170501"] = (
@@ -1042,7 +1266,7 @@ class TestWarehouseFailureContinuesSameDateWork:
     def test_date_is_incomplete(self, tmp_path: Path) -> None:
         paths = _write_source_files(tmp_path)
         day = date(2017, 5, 1)
-        runner, provider, storage_manager, bigquery_loader, replay_state_store = _make_runner(
+        runner, provider, storage_manager, bigquery_loader, replay_state_store, provenance_store = _make_runner(
             tmp_path, daily_batches={day: _daily_batch(paths, day)}
         )
         bigquery_loader._client.raise_for_destination["mercury-data-platform-dev.raw.payments$20170501"] = (
@@ -1065,7 +1289,7 @@ class TestWarehouseFailureContinuesSameDateWork:
         # text is simply never carried into durable state.
         paths = _write_source_files(tmp_path)
         day = date(2017, 5, 1)
-        runner, provider, storage_manager, bigquery_loader, replay_state_store = _make_runner(
+        runner, provider, storage_manager, bigquery_loader, replay_state_store, provenance_store = _make_runner(
             tmp_path, daily_batches={day: _daily_batch(paths, day)}
         )
         sentinel_exc = gcs_exceptions.ServiceUnavailable("sensitive-test-sentinel@example.invalid")
@@ -1086,7 +1310,7 @@ class TestMultipleFailuresSameDate:
         paths = _write_source_files(tmp_path)
         day = date(2017, 5, 1)
         broken_batch = _daily_batch_with_broken_source(paths, day, "payments", tmp_path)
-        runner, provider, storage_manager, bigquery_loader, replay_state_store = _make_runner(
+        runner, provider, storage_manager, bigquery_loader, replay_state_store, provenance_store = _make_runner(
             tmp_path, daily_batches={day: broken_batch}
         )
         bigquery_loader._client.raise_for_destination["mercury-data-platform-dev.raw.reviews$20170501"] = (
@@ -1107,7 +1331,7 @@ class TestMultipleFailuresSameDate:
         paths = _write_source_files(tmp_path)
         day = date(2017, 5, 1)
         broken_batch = _daily_batch_with_broken_source(paths, day, "payments", tmp_path)
-        runner, provider, storage_manager, bigquery_loader, replay_state_store = _make_runner(
+        runner, provider, storage_manager, bigquery_loader, replay_state_store, provenance_store = _make_runner(
             tmp_path, daily_batches={day: broken_batch}
         )
         bigquery_loader._client.raise_for_destination["mercury-data-platform-dev.raw.reviews$20170501"] = (
@@ -1125,7 +1349,7 @@ class TestMultipleFailuresSameDate:
         paths = _write_source_files(tmp_path)
         day = date(2017, 5, 1)
         broken_batch = _daily_batch_with_broken_source(paths, day, "payments", tmp_path)
-        runner, provider, storage_manager, bigquery_loader, replay_state_store = _make_runner(
+        runner, provider, storage_manager, bigquery_loader, replay_state_store, provenance_store = _make_runner(
             tmp_path, daily_batches={day: broken_batch}
         )
         bigquery_loader._client.raise_for_destination["mercury-data-platform-dev.raw.reviews$20170501"] = (
@@ -1143,7 +1367,7 @@ class TestMultipleFailuresSameDate:
         paths = _write_source_files(tmp_path)
         day = date(2017, 5, 1)
         broken_batch = _daily_batch_with_broken_source(paths, day, "payments", tmp_path)
-        runner, provider, storage_manager, bigquery_loader, replay_state_store = _make_runner(
+        runner, provider, storage_manager, bigquery_loader, replay_state_store, provenance_store = _make_runner(
             tmp_path, daily_batches={day: broken_batch}
         )
         bigquery_loader._client.raise_for_destination["mercury-data-platform-dev.raw.reviews$20170501"] = (
@@ -1162,7 +1386,7 @@ class TestRunRange:
     def test_inclusive_range_runs_correct_number_of_days(self, tmp_path: Path) -> None:
         paths = _write_source_files(tmp_path)
         days = [date(2017, 5, 1), date(2017, 5, 2), date(2017, 5, 3)]
-        runner, provider, storage_manager, bigquery_loader, replay_state_store = _make_runner(
+        runner, provider, storage_manager, bigquery_loader, replay_state_store, provenance_store = _make_runner(
             tmp_path, daily_batches={d: _daily_batch(paths, d) for d in days}
         )
 
@@ -1173,7 +1397,7 @@ class TestRunRange:
     def test_start_equals_end_runs_one_day(self, tmp_path: Path) -> None:
         paths = _write_source_files(tmp_path)
         day = date(2017, 5, 1)
-        runner, provider, storage_manager, bigquery_loader, replay_state_store = _make_runner(
+        runner, provider, storage_manager, bigquery_loader, replay_state_store, provenance_store = _make_runner(
             tmp_path, daily_batches={day: _daily_batch(paths, day)}
         )
 
@@ -1182,7 +1406,7 @@ class TestRunRange:
         assert len(result.day_results) == 1
 
     def test_start_after_end_rejected(self, tmp_path: Path) -> None:
-        runner, provider, storage_manager, bigquery_loader, replay_state_store = _make_runner(tmp_path)
+        runner, provider, storage_manager, bigquery_loader, replay_state_store, provenance_store = _make_runner(tmp_path)
 
         with pytest.raises(ValueError):
             runner.run_range(date(2017, 5, 3), date(2017, 5, 1))
@@ -1196,7 +1420,7 @@ class TestRunRange:
         bad_day = date(2017, 5, 2)
         later_day = date(2017, 5, 3)
         broken_batch = _daily_batch_with_broken_source(paths, bad_day, "orders", tmp_path)
-        runner, provider, storage_manager, bigquery_loader, replay_state_store = _make_runner(
+        runner, provider, storage_manager, bigquery_loader, replay_state_store, provenance_store = _make_runner(
             tmp_path,
             daily_batches={
                 good_day: _daily_batch(paths, good_day),
@@ -1217,7 +1441,7 @@ class TestRunRange:
         good_day = date(2017, 5, 1)
         bad_day = date(2017, 5, 2)
         broken_batch = _daily_batch_with_broken_source(paths, bad_day, "orders", tmp_path)
-        runner, provider, storage_manager, bigquery_loader, replay_state_store = _make_runner(
+        runner, provider, storage_manager, bigquery_loader, replay_state_store, provenance_store = _make_runner(
             tmp_path,
             daily_batches={good_day: _daily_batch(paths, good_day), bad_day: broken_batch},
         )
@@ -1236,7 +1460,7 @@ class TestRunRange:
         good_day = date(2017, 5, 1)
         bad_day = date(2017, 5, 2)
         broken_batch = _daily_batch_with_broken_source(paths, bad_day, "orders", tmp_path)
-        runner, provider, storage_manager, bigquery_loader, replay_state_store = _make_runner(
+        runner, provider, storage_manager, bigquery_loader, replay_state_store, provenance_store = _make_runner(
             tmp_path,
             daily_batches={good_day: _daily_batch(paths, good_day), bad_day: broken_batch},
         )
@@ -1255,7 +1479,7 @@ class TestRunIdAcrossRange:
     def test_run_range_uses_one_run_id_across_all_attempted_dates(self, tmp_path: Path) -> None:
         paths = _write_source_files(tmp_path)
         days = [date(2017, 5, 1), date(2017, 5, 2), date(2017, 5, 3)]
-        runner, provider, storage_manager, bigquery_loader, replay_state_store = _make_runner(
+        runner, provider, storage_manager, bigquery_loader, replay_state_store, provenance_store = _make_runner(
             tmp_path, daily_batches={d: _daily_batch(paths, d) for d in days}
         )
 
@@ -1268,7 +1492,7 @@ class TestRunIdAcrossRange:
         paths = _write_source_files(tmp_path)
         day1 = date(2017, 5, 1)
         day2 = date(2017, 5, 2)
-        runner, provider, storage_manager, bigquery_loader, replay_state_store = _make_runner(
+        runner, provider, storage_manager, bigquery_loader, replay_state_store, provenance_store = _make_runner(
             tmp_path, daily_batches={day1: _daily_batch(paths, day1), day2: _daily_batch(paths, day2)}
         )
 
@@ -1287,7 +1511,7 @@ class TestRunIdAcrossRange:
         paths = _write_source_files(tmp_path)
         day1 = date(2017, 5, 1)
         day2 = date(2017, 5, 2)
-        runner, provider, storage_manager, bigquery_loader, replay_state_store = _make_runner(
+        runner, provider, storage_manager, bigquery_loader, replay_state_store, provenance_store = _make_runner(
             tmp_path, daily_batches={day1: _daily_batch(paths, day1), day2: _daily_batch(paths, day2)}
         )
 
@@ -1306,7 +1530,7 @@ class TestRunIdAcrossRange:
 class TestProviderFailure:
     def test_no_fabricated_events_when_provider_fails_before_batch_exists(self, tmp_path: Path) -> None:
         day = date(2017, 5, 1)
-        runner, provider, storage_manager, bigquery_loader, replay_state_store = _make_runner(tmp_path)
+        runner, provider, storage_manager, bigquery_loader, replay_state_store, provenance_store = _make_runner(tmp_path)
         provider.fail_daily_dates.add(day)
 
         with pytest.raises(RuntimeError):
@@ -1316,7 +1540,7 @@ class TestProviderFailure:
 
     def test_no_connector_execution_on_provider_failure(self, tmp_path: Path) -> None:
         day = date(2017, 5, 1)
-        runner, provider, storage_manager, bigquery_loader, replay_state_store = _make_runner(tmp_path)
+        runner, provider, storage_manager, bigquery_loader, replay_state_store, provenance_store = _make_runner(tmp_path)
         provider.fail_daily_dates.add(day)
 
         with pytest.raises(RuntimeError):
@@ -1326,7 +1550,7 @@ class TestProviderFailure:
 
     def test_no_warehouse_execution_on_provider_failure(self, tmp_path: Path) -> None:
         day = date(2017, 5, 1)
-        runner, provider, storage_manager, bigquery_loader, replay_state_store = _make_runner(tmp_path)
+        runner, provider, storage_manager, bigquery_loader, replay_state_store, provenance_store = _make_runner(tmp_path)
         provider.fail_daily_dates.add(day)
 
         with pytest.raises(RuntimeError):
@@ -1336,7 +1560,7 @@ class TestProviderFailure:
 
     def test_provider_error_propagates(self, tmp_path: Path) -> None:
         day = date(2017, 5, 1)
-        runner, provider, storage_manager, bigquery_loader, replay_state_store = _make_runner(tmp_path)
+        runner, provider, storage_manager, bigquery_loader, replay_state_store, provenance_store = _make_runner(tmp_path)
         provider.fail_daily_dates.add(day)
 
         with pytest.raises(RuntimeError, match="simulated provider failure"):
@@ -1347,7 +1571,7 @@ class TestStateStoreFailure:
     def test_failure_writing_running_ingestion_prevents_connector_from_running(self, tmp_path: Path) -> None:
         paths = _write_source_files(tmp_path)
         day = date(2017, 5, 1)
-        runner, provider, storage_manager, bigquery_loader, replay_state_store = _make_runner(
+        runner, provider, storage_manager, bigquery_loader, replay_state_store, provenance_store = _make_runner(
             tmp_path, daily_batches={day: _daily_batch(paths, day)}
         )
         replay_state_store.fail_when = (
@@ -1366,7 +1590,7 @@ class TestStateStoreFailure:
     def test_failure_writing_running_ingestion_stops_warehouse_too(self, tmp_path: Path) -> None:
         paths = _write_source_files(tmp_path)
         day = date(2017, 5, 1)
-        runner, provider, storage_manager, bigquery_loader, replay_state_store = _make_runner(
+        runner, provider, storage_manager, bigquery_loader, replay_state_store, provenance_store = _make_runner(
             tmp_path, daily_batches={day: _daily_batch(paths, day)}
         )
         replay_state_store.fail_when = (
@@ -1381,7 +1605,7 @@ class TestStateStoreFailure:
     def test_failure_writing_running_warehouse_prevents_bigquery_call(self, tmp_path: Path) -> None:
         paths = _write_source_files(tmp_path)
         day = date(2017, 5, 1)
-        runner, provider, storage_manager, bigquery_loader, replay_state_store = _make_runner(
+        runner, provider, storage_manager, bigquery_loader, replay_state_store, provenance_store = _make_runner(
             tmp_path, daily_batches={day: _daily_batch(paths, day)}
         )
         replay_state_store.fail_when = (
@@ -1400,7 +1624,7 @@ class TestStateStoreFailure:
     def test_failure_writing_running_warehouse_aborts_replay(self, tmp_path: Path) -> None:
         paths = _write_source_files(tmp_path)
         day = date(2017, 5, 1)
-        runner, provider, storage_manager, bigquery_loader, replay_state_store = _make_runner(
+        runner, provider, storage_manager, bigquery_loader, replay_state_store, provenance_store = _make_runner(
             tmp_path, daily_batches={day: _daily_batch(paths, day)}
         )
         replay_state_store.fail_when = (
@@ -1420,7 +1644,7 @@ class TestStateStoreFailure:
     def test_failure_writing_success_warehouse_does_not_roll_back_gcs_or_bigquery(self, tmp_path: Path) -> None:
         paths = _write_source_files(tmp_path)
         day = date(2017, 5, 1)
-        runner, provider, storage_manager, bigquery_loader, replay_state_store = _make_runner(
+        runner, provider, storage_manager, bigquery_loader, replay_state_store, provenance_store = _make_runner(
             tmp_path, daily_batches={day: _daily_batch(paths, day)}
         )
         replay_state_store.fail_when = (
@@ -1443,7 +1667,7 @@ class TestStateStoreFailure:
     def test_failure_writing_success_warehouse_stops_remaining_sources(self, tmp_path: Path) -> None:
         paths = _write_source_files(tmp_path)
         day = date(2017, 5, 1)
-        runner, provider, storage_manager, bigquery_loader, replay_state_store = _make_runner(
+        runner, provider, storage_manager, bigquery_loader, replay_state_store, provenance_store = _make_runner(
             tmp_path, daily_batches={day: _daily_batch(paths, day)}
         )
         replay_state_store.fail_when = (
@@ -1479,7 +1703,7 @@ class TestExistingImmutableDestination:
         # exist).
         paths = _write_source_files(tmp_path)
         day = date(2017, 5, 1)
-        runner, provider, storage_manager, bigquery_loader, replay_state_store = _make_runner(
+        runner, provider, storage_manager, bigquery_loader, replay_state_store, provenance_store = _make_runner(
             tmp_path, daily_batches={day: _daily_batch(paths, day)}
         )
         runner.run_day(day)  # first run lands everything successfully
@@ -1502,7 +1726,7 @@ class TestExistingImmutableDestination:
     def test_rerunning_an_already_complete_day_preserves_original_success_history(self, tmp_path: Path) -> None:
         paths = _write_source_files(tmp_path)
         day = date(2017, 5, 1)
-        runner, provider, storage_manager, bigquery_loader, replay_state_store = _make_runner(
+        runner, provider, storage_manager, bigquery_loader, replay_state_store, provenance_store = _make_runner(
             tmp_path, daily_batches={day: _daily_batch(paths, day)}
         )
         runner.run_day(day)
@@ -1531,7 +1755,7 @@ class TestMonotonicDateCompletion:
     def test_run_day_does_not_raise_when_date_already_complete_despite_current_failure(self, tmp_path: Path) -> None:
         paths = _write_source_files(tmp_path)
         day = date(2017, 5, 1)
-        runner, provider, storage_manager, bigquery_loader, replay_state_store = _make_runner(
+        runner, provider, storage_manager, bigquery_loader, replay_state_store, provenance_store = _make_runner(
             tmp_path, daily_batches={day: _daily_batch(paths, day)}
         )
         runner.run_day(day)  # completes the date
@@ -1547,7 +1771,7 @@ class TestMonotonicDateCompletion:
         paths = _write_source_files(tmp_path)
         day = date(2017, 5, 1)
         broken_batch = _daily_batch_with_broken_source(paths, day, "payments", tmp_path)
-        runner, provider, storage_manager, bigquery_loader, replay_state_store = _make_runner(
+        runner, provider, storage_manager, bigquery_loader, replay_state_store, provenance_store = _make_runner(
             tmp_path, daily_batches={day: broken_batch}
         )
 
@@ -1559,7 +1783,7 @@ class TestMonotonicDateCompletion:
     def test_latest_attempt_can_regress_to_failed_while_completion_remains_success(self, tmp_path: Path) -> None:
         paths = _write_source_files(tmp_path)
         day = date(2017, 5, 1)
-        runner, provider, storage_manager, bigquery_loader, replay_state_store = _make_runner(
+        runner, provider, storage_manager, bigquery_loader, replay_state_store, provenance_store = _make_runner(
             tmp_path, daily_batches={day: _daily_batch(paths, day)}
         )
         runner.run_day(day)
@@ -1580,7 +1804,7 @@ class TestMonotonicDateCompletion:
         paths = _write_source_files(tmp_path)
         already_complete_day = date(2017, 5, 1)
         next_day = date(2017, 5, 2)
-        runner, provider, storage_manager, bigquery_loader, replay_state_store = _make_runner(
+        runner, provider, storage_manager, bigquery_loader, replay_state_store, provenance_store = _make_runner(
             tmp_path,
             daily_batches={
                 already_complete_day: _daily_batch(paths, already_complete_day),
@@ -1600,7 +1824,7 @@ class TestMonotonicDateCompletion:
         # date happens to be logically complete from earlier history.
         paths = _write_source_files(tmp_path)
         day = date(2017, 5, 1)
-        runner, provider, storage_manager, bigquery_loader, replay_state_store = _make_runner(
+        runner, provider, storage_manager, bigquery_loader, replay_state_store, provenance_store = _make_runner(
             tmp_path, daily_batches={day: _daily_batch(paths, day)}
         )
         runner.run_day(day)
@@ -1615,7 +1839,7 @@ class TestGenerateRange:
     def test_calls_provider_for_every_inclusive_date(self, tmp_path: Path) -> None:
         paths = _write_source_files(tmp_path)
         days = [date(2017, 5, 1), date(2017, 5, 2)]
-        runner, provider, storage_manager, bigquery_loader, replay_state_store = _make_runner(
+        runner, provider, storage_manager, bigquery_loader, replay_state_store, provenance_store = _make_runner(
             tmp_path, daily_batches={d: _daily_batch(paths, d) for d in days}
         )
 
@@ -1627,7 +1851,7 @@ class TestGenerateRange:
     def test_does_not_invoke_connectors_or_storage_or_bigquery(self, tmp_path: Path) -> None:
         paths = _write_source_files(tmp_path)
         day = date(2017, 5, 1)
-        runner, provider, storage_manager, bigquery_loader, replay_state_store = _make_runner(
+        runner, provider, storage_manager, bigquery_loader, replay_state_store, provenance_store = _make_runner(
             tmp_path, daily_batches={day: _daily_batch(paths, day)}
         )
 
@@ -1639,7 +1863,7 @@ class TestGenerateRange:
     def test_does_not_write_replay_state(self, tmp_path: Path) -> None:
         paths = _write_source_files(tmp_path)
         day = date(2017, 5, 1)
-        runner, provider, storage_manager, bigquery_loader, replay_state_store = _make_runner(
+        runner, provider, storage_manager, bigquery_loader, replay_state_store, provenance_store = _make_runner(
             tmp_path, daily_batches={day: _daily_batch(paths, day)}
         )
 

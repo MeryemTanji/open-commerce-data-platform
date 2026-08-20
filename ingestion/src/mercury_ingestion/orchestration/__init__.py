@@ -13,21 +13,34 @@ Also exposes the ADR-010 replay-state model (``ReplayStateStore``,
 (``BigQueryReplayStateStore``); the Phase 3A recovery planning model
 (``RecoveryAction``, ``RecoveryEvidence``, ``RecoveryPlanItem``,
 ``RecoveryPlan``, ``RecoveryPlanner``), a pure decision policy that
-executes nothing on its own; and the Phase 3B recovery execution layer
+executes nothing on its own; the Phase 3B recovery execution layer
 (``RecoveryExecutionOutcome``, ``ValidatedRawArtifact``,
 ``RecoveryItemExecutionResult``, ``RecoveryExecutionResult``,
-``RecoveryExecutor``), which actually performs the physical work a
-``RecoveryPlan`` decided on, reusing the same connectors and
-``BigQueryRawLoader`` ``HistoricalReplayRunner`` already uses. Neither
-recovery layer is yet wired into ``HistoricalReplayRunner`` itself; each
-is exported here because it is an independently usable, standalone
-public type, consistent with how every other meaningful type in this
-package is already exposed. Internal helpers (e.g.
-``HistoricalReplayRunner``'s private phase methods) are deliberately not
-re-exported here.
+``RecoveryExecutor``), which performs the physical work a
+``RecoveryPlan`` decided on; and the Phase 3C provenance/reconciliation
+layer (``RawArtifactProvenance``, ``WarehouseLoadProvenance``,
+``ProvenanceStore``, ``BigQueryProvenanceStore``,
+``ReconciliationOutcome``, ``ReconciliationReason``,
+``ReconciliationResult``, ``RecoveryReconciler``), which durably records
+what was physically produced/loaded and can prove -- never guess -- that
+a ``RECONCILE``-decided source has already physically succeeded.
+Internal helpers (e.g. ``HistoricalReplayRunner``'s private phase
+methods) are deliberately not re-exported here.
 """
 
+from mercury_ingestion.orchestration.bigquery_provenance import BigQueryProvenanceStore
 from mercury_ingestion.orchestration.bigquery_replay_state import BigQueryReplayStateStore
+from mercury_ingestion.orchestration.provenance import (
+    ProvenanceStore,
+    RawArtifactProvenance,
+    WarehouseLoadProvenance,
+)
+from mercury_ingestion.orchestration.reconciliation import (
+    ReconciliationOutcome,
+    ReconciliationReason,
+    ReconciliationResult,
+    RecoveryReconciler,
+)
 from mercury_ingestion.orchestration.recovery import (
     RecoveryAction,
     RecoveryEvidence,
@@ -60,6 +73,7 @@ from mercury_ingestion.orchestration.state import (
 )
 
 __all__ = [
+    "BigQueryProvenanceStore",
     "BigQueryReplayStateStore",
     "CONNECTOR_MAP",
     "HistoricalReplayDayResult",
@@ -67,6 +81,11 @@ __all__ = [
     "HistoricalReplayInitialResult",
     "HistoricalReplayRangeResult",
     "HistoricalReplayRunner",
+    "ProvenanceStore",
+    "RawArtifactProvenance",
+    "ReconciliationOutcome",
+    "ReconciliationReason",
+    "ReconciliationResult",
     "RecoveryAction",
     "RecoveryEvidence",
     "RecoveryExecutionError",
@@ -77,10 +96,12 @@ __all__ = [
     "RecoveryPlan",
     "RecoveryPlanItem",
     "RecoveryPlanner",
+    "RecoveryReconciler",
     "ReplayStage",
     "ReplayStateRecord",
     "ReplayStateStore",
     "ReplayStatus",
     "ValidatedRawArtifact",
+    "WarehouseLoadProvenance",
     "is_date_complete",
 ]

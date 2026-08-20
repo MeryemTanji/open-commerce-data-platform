@@ -74,7 +74,13 @@ class GCSStorageManager(StorageManager):
     checksum is computed from the local source file being uploaded, the
     same integrity contract ``LocalStorageManager`` uses, so
     ``StorageResult.checksum`` means the same thing regardless of which
-    ``StorageManager`` implementation produced it.
+    ``StorageManager`` implementation produced it. That same checksum is
+    also attached to the uploaded object as GCS custom metadata under
+    the key ``mercury_sha256`` (the hexadecimal digest only -- nothing
+    else), computed before the upload so the object and its checksum
+    metadata are created together in one atomic write. This lets a
+    later read-only inspector confirm an artifact's integrity from
+    object metadata alone, without ever downloading its contents.
     """
 
     def __init__(self, bucket_name: str, project_id: str | None = None) -> None:
@@ -120,14 +126,18 @@ class GCSStorageManager(StorageManager):
         object_name = _build_object_name(source_system, source_object, ingestion_date, source_file.name)
         destination_uri = f"gs://{self.bucket_name}/{object_name}"
 
+        # Computed before upload so the object and its mercury_sha256
+        # custom metadata are created together in one atomic write,
+        # rather than the object existing briefly without it.
+        checksum = _sha256_of(source_file)
+        file_size_bytes = source_file.stat().st_size
+
         blob = self._bucket.blob(object_name)
+        blob.metadata = {"mercury_sha256": checksum}
         try:
             blob.upload_from_filename(str(source_file), if_generation_match=0)
         except gcs_exceptions.PreconditionFailed as exc:
             raise FileExistsError(f"destination object already exists: {destination_uri}") from exc
-
-        checksum = _sha256_of(source_file)
-        file_size_bytes = source_file.stat().st_size
 
         return StorageResult(
             landing_path=destination_uri,

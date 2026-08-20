@@ -43,6 +43,11 @@ from mercury_ingestion.common.operational_errors import OperationalError, Operat
 from mercury_ingestion.common.storage import StorageManager
 from mercury_ingestion.connectors.base import BaseConnector, ConnectorRunResult
 from mercury_ingestion.orchestration.connector_builder import CONNECTOR_MAP, build_connector
+from mercury_ingestion.orchestration.provenance import (
+    ProvenanceStore,
+    RawArtifactProvenance,
+    WarehouseLoadProvenance,
+)
 from mercury_ingestion.orchestration.state import (
     ReplayStage,
     ReplayStateRecord,
@@ -181,15 +186,17 @@ class _SourceIngestionOutcome:
     """Internal carrier passed from the ingestion phase to the warehouse phase.
 
     Not part of the public API -- purely a way to hand each source's
-    connector result and execution-start time from
+    connector result, execution-start time, and (on success) the
+    ``RawArtifactProvenance`` identity created for it from
     ``_run_ingestion_phase`` to ``_run_warehouse_phase`` without
-    recomputing or losing either.
+    recomputing or losing any of them.
     """
 
     source_object: str
     source_started_at: datetime
     connector_result: ConnectorRunResult
     ingestion_succeeded: bool
+    provenance_id: str | None = None
 
 
 def _derive_ingestion_status(connector_results: tuple[ConnectorRunResult, ...]) -> RunnerStatus:
@@ -243,6 +250,10 @@ class HistoricalReplayRunner:
     construct one (the ADR-010 usage example shows the state store
     always being constructed before the runner), which is a minor
     constructor-time inconvenience rather than a real cost.
+
+    ``provenance_store`` follows the exact same pattern (ADR-010 Phase
+    3C): required, unconditional, and unused by ``run_initial_load()``,
+    which remains entirely out of provenance scope.
     """
 
     def __init__(
@@ -251,6 +262,7 @@ class HistoricalReplayRunner:
         storage_manager: StorageManager,
         bigquery_loader: BigQueryRawLoader,
         replay_state_store: ReplayStateStore,
+        provenance_store: ProvenanceStore,
     ) -> None:
         if not isinstance(source_provider, SourceDeliveryProvider):
             raise TypeError("source_provider must be a SourceDeliveryProvider")
@@ -260,11 +272,14 @@ class HistoricalReplayRunner:
             raise TypeError("bigquery_loader must be a BigQueryRawLoader")
         if not isinstance(replay_state_store, ReplayStateStore):
             raise TypeError("replay_state_store must be a ReplayStateStore")
+        if not isinstance(provenance_store, ProvenanceStore):
+            raise TypeError("provenance_store must be a ProvenanceStore")
 
         self.source_provider = source_provider
         self.storage_manager = storage_manager
         self.bigquery_loader = bigquery_loader
         self.replay_state_store = replay_state_store
+        self.provenance_store = provenance_store
 
     def run_initial_load(self, ingestion_date: date) -> HistoricalReplayInitialResult:
         """Run the master/reference sources through ingestion and warehouse loading.
@@ -510,12 +525,31 @@ class HistoricalReplayRunner:
                 )
                 continue  # attempt-all-safe-work: keep going, do not stop the date
 
+            provenance_id = str(uuid4())
+            self._append_artifact_provenance(
+                RawArtifactProvenance(
+                    provenance_id=provenance_id,
+                    run_id=run_id,
+                    delivery_date=delivery_date,
+                    source_object=source_object,
+                    ingestion_date=ingestion_date,
+                    gcs_uri=connector_result.metadata.landing_path,
+                    checksum=connector_result.metadata.checksum,
+                    file_size_bytes=connector_result.metadata.file_size_bytes,
+                    record_count=connector_result.metadata.record_count,
+                    recorded_at=_now(),
+                ),
+                delivery_date=delivery_date,
+                source_object=source_object,
+            )
+
             outcomes.append(
                 _SourceIngestionOutcome(
                     source_object=source_object,
                     source_started_at=source_started_at,
                     connector_result=connector_result,
                     ingestion_succeeded=True,
+                    provenance_id=provenance_id,
                 )
             )
 
@@ -587,6 +621,23 @@ class HistoricalReplayRunner:
                 continue  # attempt-all-safe-work: keep going, do not stop the date
 
             completion_time = _now()
+            load_id = str(uuid4())
+            self._append_warehouse_provenance(
+                WarehouseLoadProvenance(
+                    load_id=load_id,
+                    provenance_id=outcome.provenance_id,
+                    run_id=run_id,
+                    delivery_date=delivery_date,
+                    source_object=source_object,
+                    destination=load_result.destination,
+                    partition_date=load_result.partition_date,
+                    output_rows=load_result.output_rows,
+                    job_id=load_result.job_id,
+                    recorded_at=completion_time,
+                ),
+                delivery_date=delivery_date,
+                source_object=source_object,
+            )
             self._append_state(
                 ReplayStateRecord.success(
                     run_id=run_id,
@@ -603,6 +654,50 @@ class HistoricalReplayRunner:
             warehouse_results.append(load_result)
 
         return tuple(warehouse_results)
+
+    def _append_artifact_provenance(
+        self, record: RawArtifactProvenance, *, delivery_date: date, source_object: str
+    ) -> None:
+        """Persist one Raw artifact provenance record, aborting the replay if that fails.
+
+        Provenance persistence is control-plane critical, exactly like
+        replay-state persistence: the GCS artifact it describes already
+        exists and is never rolled back, but processing must not
+        continue past a source whose provenance Mercury failed to
+        durably record.
+        """
+        try:
+            self.provenance_store.append_artifact(record)
+        except Exception as exc:
+            raise HistoricalReplayError(
+                f"failed to persist artifact provenance for source_object={source_object!r} "
+                f"on {delivery_date.isoformat()}",
+                delivery_date=delivery_date,
+                stage="ingestion",
+                source_object=source_object,
+            ) from exc
+
+    def _append_warehouse_provenance(
+        self, record: WarehouseLoadProvenance, *, delivery_date: date, source_object: str
+    ) -> None:
+        """Persist one warehouse-load provenance record, aborting the replay if that fails.
+
+        If this fails, the BigQuery data it describes already exists
+        and is never rolled back or reloaded, but ``SUCCESS | WAREHOUSE``
+        must not be written -- without durable warehouse provenance,
+        Phase 3C reconciliation could never later prove this load
+        actually happened.
+        """
+        try:
+            self.provenance_store.append_warehouse_load(record)
+        except Exception as exc:
+            raise HistoricalReplayError(
+                f"failed to persist warehouse load provenance for source_object={source_object!r} "
+                f"on {delivery_date.isoformat()}",
+                delivery_date=delivery_date,
+                stage="warehouse",
+                source_object=source_object,
+            ) from exc
 
     def _append_state(self, record: ReplayStateRecord, *, delivery_date: date, source_object: str) -> None:
         """Persist one replay-state event, failing the replay clearly if that fails.

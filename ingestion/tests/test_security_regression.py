@@ -21,6 +21,11 @@ from mercury_ingestion.common.metadata import IngestionStatus
 from mercury_ingestion.common.operational_errors import MAX_OPERATIONAL_ERROR_LENGTH, OperationalErrorCategory
 from mercury_ingestion.common.storage import LocalStorageManager, StorageManager, StorageResult
 from mercury_ingestion.connectors.base import BaseConnector, ConnectorRunResult
+from mercury_ingestion.orchestration.provenance import (
+    ProvenanceStore,
+    RawArtifactProvenance,
+    WarehouseLoadProvenance,
+)
 from mercury_ingestion.orchestration.replay import HistoricalReplayError, HistoricalReplayRunner
 from mercury_ingestion.orchestration.state import ReplayStateRecord, ReplayStateStore, ReplayStatus
 from mercury_ingestion.sources.base import SourceDelivery, SourceDeliveryBatch, SourceDeliveryProvider
@@ -191,6 +196,47 @@ class _InMemoryReplayStateStore(ReplayStateStore):
         return tuple(by_source[key] for key in sorted(by_source))
 
 
+class _InMemoryProvenanceStore(ProvenanceStore):
+    """A minimal, always-succeeding ProvenanceStore for security-regression tests
+    that only need HistoricalReplayRunner to be constructible -- not provenance
+    behavior itself, which has its own dedicated tests elsewhere."""
+
+    def __init__(self) -> None:
+        self.artifacts: list[RawArtifactProvenance] = []
+        self.warehouse_loads: list[WarehouseLoadProvenance] = []
+
+    def append_artifact(self, record: RawArtifactProvenance) -> None:
+        self.artifacts.append(record)
+
+    def append_warehouse_load(self, record: WarehouseLoadProvenance) -> None:
+        self.warehouse_loads.append(record)
+
+    def get_artifact(self, provenance_id: str) -> RawArtifactProvenance | None:
+        return next((a for a in self.artifacts if a.provenance_id == provenance_id), None)
+
+    def get_artifact_history(self, delivery_date: date, source_object: str) -> tuple[RawArtifactProvenance, ...]:
+        return tuple(a for a in self.artifacts if a.delivery_date == delivery_date and a.source_object == source_object)
+
+    def get_artifact_by_uri(self, delivery_date: date, source_object: str, gcs_uri: str) -> RawArtifactProvenance | None:
+        return next(
+            (
+                a
+                for a in self.artifacts
+                if a.delivery_date == delivery_date and a.source_object == source_object and a.gcs_uri == gcs_uri
+            ),
+            None,
+        )
+
+    def get_warehouse_load_history(self, delivery_date: date, source_object: str) -> tuple[WarehouseLoadProvenance, ...]:
+        return tuple(
+            w for w in self.warehouse_loads if w.delivery_date == delivery_date and w.source_object == source_object
+        )
+
+    def get_latest_warehouse_load(self, delivery_date: date, source_object: str) -> WarehouseLoadProvenance | None:
+        history = self.get_warehouse_load_history(delivery_date, source_object)
+        return history[-1] if history else None
+
+
 class _SingleSourceProvider(SourceDeliveryProvider):
     """Always returns the same four-source daily batch, regardless of date."""
 
@@ -293,6 +339,7 @@ class TestHistoricalReplayRunnerSanitization:
             storage_manager=storage_manager,
             bigquery_loader=bigquery_loader,
             replay_state_store=replay_state_store,
+            provenance_store=_InMemoryProvenanceStore(),
         )
         day = date(2017, 5, 1)
         sentinel_exc = gcs_exceptions.ServiceUnavailable(f"upstream error: {SENTINEL}")
@@ -322,6 +369,7 @@ class TestHistoricalReplayRunnerSanitization:
             storage_manager=storage_manager,
             bigquery_loader=bigquery_loader,
             replay_state_store=replay_state_store,
+            provenance_store=_InMemoryProvenanceStore(),
         )
         day = date(2017, 5, 1)
 
@@ -346,6 +394,7 @@ class TestHistoricalReplayRunnerSanitization:
             storage_manager=storage_manager,
             bigquery_loader=bigquery_loader,
             replay_state_store=replay_state_store,
+            provenance_store=_InMemoryProvenanceStore(),
         )
         day = date(2017, 5, 1)
 
@@ -403,6 +452,7 @@ class TestHistoricalReplayRunnerSanitization:
                 storage_manager=storage_manager,
                 bigquery_loader=bigquery_loader,
                 replay_state_store=replay_state_store,
+                provenance_store=_InMemoryProvenanceStore(),
             )
             day = date(2017, 5, 1)
 
@@ -434,6 +484,7 @@ class TestHistoricalReplayRunnerSanitization:
             storage_manager=storage_manager,
             bigquery_loader=bigquery_loader,
             replay_state_store=replay_state_store,
+            provenance_store=_InMemoryProvenanceStore(),
         )
         day = date(2017, 5, 1)
 

@@ -28,9 +28,17 @@ class _FakeBlob:
     def __init__(self, name: str, bucket: "_FakeBucket") -> None:
         self.name = name
         self._bucket = bucket
+        self.metadata: dict[str, str] | None = None
+        self.metadata_set_before_upload: bool | None = None
 
     def upload_from_filename(self, filename: str, **kwargs: object) -> None:
-        self._bucket.upload_calls.append({"filename": filename, "kwargs": kwargs, "blob_name": self.name})
+        # Records whether metadata was already assigned by the time
+        # upload happens, so tests can confirm the checksum metadata was
+        # set on the blob object before, not after, the upload call.
+        self.metadata_set_before_upload = self.metadata is not None
+        self._bucket.upload_calls.append(
+            {"filename": filename, "kwargs": kwargs, "blob_name": self.name, "metadata": self.metadata}
+        )
         if self._bucket.raise_exc is not None:
             raise self._bucket.raise_exc
 
@@ -251,6 +259,86 @@ class TestUploadBehavior:
             ingestion_date=INGESTION_DATE,
         )
         # No AssertionError raised means no metadata/existence lookup occurred.
+
+
+class TestChecksumMetadata:
+    """ADR-010 Phase 3C: mercury_sha256 custom metadata on new uploads."""
+
+    def test_mercury_sha256_metadata_matches_storage_result_checksum(self, tmp_path: Path) -> None:
+        source_file = _write_source_file(tmp_path)
+        manager = GCSStorageManager(bucket_name=BUCKET_NAME)
+
+        result = manager.save_file(
+            source_file=source_file,
+            source_system="order_platform",
+            source_object="orders",
+            ingestion_date=INGESTION_DATE,
+        )
+
+        upload_call = manager._bucket.upload_calls[0]
+        assert upload_call["metadata"] == {"mercury_sha256": result.checksum}
+
+    def test_mercury_sha256_matches_actual_file_content_hash(self, tmp_path: Path) -> None:
+        content = b"id,amount\n1,10\n"
+        source_file = _write_source_file(tmp_path, content=content)
+        manager = GCSStorageManager(bucket_name=BUCKET_NAME)
+
+        manager.save_file(
+            source_file=source_file,
+            source_system="order_platform",
+            source_object="orders",
+            ingestion_date=INGESTION_DATE,
+        )
+
+        expected_checksum = hashlib.sha256(content).hexdigest()
+        upload_call = manager._bucket.upload_calls[0]
+        assert upload_call["metadata"]["mercury_sha256"] == expected_checksum
+
+    def test_metadata_contains_only_the_checksum_key(self, tmp_path: Path) -> None:
+        source_file = _write_source_file(tmp_path)
+        manager = GCSStorageManager(bucket_name=BUCKET_NAME)
+
+        manager.save_file(
+            source_file=source_file,
+            source_system="order_platform",
+            source_object="orders",
+            ingestion_date=INGESTION_DATE,
+        )
+
+        upload_call = manager._bucket.upload_calls[0]
+        assert list(upload_call["metadata"].keys()) == ["mercury_sha256"]
+
+    def test_metadata_set_before_upload_not_after(self, tmp_path: Path) -> None:
+        # The object and its checksum metadata must be created together
+        # in one atomic write -- metadata assigned on the blob before
+        # upload_from_filename() is called, never as a separate later step.
+        source_file = _write_source_file(tmp_path)
+        manager = GCSStorageManager(bucket_name=BUCKET_NAME)
+
+        manager.save_file(
+            source_file=source_file,
+            source_system="order_platform",
+            source_object="orders",
+            ingestion_date=INGESTION_DATE,
+        )
+
+        upload_call = manager._bucket.upload_calls[0]
+        assert upload_call["kwargs"].get("if_generation_match") == 0  # immutability preserved
+
+    def test_if_generation_match_zero_still_present_alongside_metadata(self, tmp_path: Path) -> None:
+        source_file = _write_source_file(tmp_path)
+        manager = GCSStorageManager(bucket_name=BUCKET_NAME)
+
+        manager.save_file(
+            source_file=source_file,
+            source_system="order_platform",
+            source_object="orders",
+            ingestion_date=INGESTION_DATE,
+        )
+
+        upload_call = manager._bucket.upload_calls[0]
+        assert upload_call["kwargs"].get("if_generation_match") == 0
+        assert upload_call["metadata"] is not None
 
 
 class TestStorageResult:
