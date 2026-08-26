@@ -1,0 +1,7 @@
+config {
+  type: "declaration",
+  database: "mercury-data-platform-dev",
+  schema: "raw",
+  name: "payments",
+  description: "Immutable Raw payment data ingested from the Olist payment source."
+}

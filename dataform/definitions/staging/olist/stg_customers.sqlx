@@ -1,0 +1,37 @@
+config {
+  type: "table",
+  schema: "staging",
+  name: "stg_customers",
+  description: "Standardized Olist customer records following ADR-012 and the Olist staging contract.",
+  assertions: {
+    nonNull: [
+      "customer_id",
+      "customer_unique_id",
+      "customer_zip_code_prefix",
+      "customer_city",
+      "customer_state"
+    ],
+    uniqueKey: [
+      "customer_id"
+    ]
+  }
+}
+
+SELECT
+  NULLIF(TRIM(customer_id), '') AS customer_id,
+
+  NULLIF(TRIM(customer_unique_id), '') AS customer_unique_id,
+
+  NULLIF(TRIM(customer_zip_code_prefix), '') AS customer_zip_code_prefix,
+
+  NULLIF(
+    LOWER(TRIM(customer_city)),
+    ''
+  ) AS customer_city,
+
+  NULLIF(
+    UPPER(TRIM(customer_state)),
+    ''
+  ) AS customer_state
+
+FROM ${ref("customers")}

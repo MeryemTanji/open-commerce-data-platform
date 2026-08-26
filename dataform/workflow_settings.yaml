@@ -1,0 +1,5 @@
+defaultProject: mercury-data-platform-dev
+defaultDataset: staging
+defaultLocation: europe-west4
+
+dataformCoreVersion: 3.0.0

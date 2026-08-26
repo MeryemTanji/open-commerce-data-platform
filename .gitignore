@@ -224,3 +224,22 @@ data/batch_validation/
 data/gcs_validation/
 data/simulated/
 data/incremental_validation/
+
+# Dataform Local Credentials
+dataform/.df-credentials.json
+
+# Terraform local state and working files
+**/.terraform/*
+*.tfstate
+*.tfstate.*
+crash.log
+crash.*.log
+
+# Local Terraform variable files
+*.tfvars
+*.tfvars.json
+
+# Terraform saved plans
+**/tfplan
+*.tfplan
+

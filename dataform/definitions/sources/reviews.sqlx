@@ -1,0 +1,7 @@
+config {
+  type: "declaration",
+  database: "mercury-data-platform-dev",
+  schema: "raw",
+  name: "reviews",
+  description: "Immutable Raw review data ingested from the Olist review source."
+}
