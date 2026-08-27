@@ -208,6 +208,7 @@ See [ADR-011](architecture/decisions/ADR-011-Data%20Security,%20Privacy,%20and%2
 .
 ├── architecture/
 │   └── decisions/          # Architecture Decision Records
+|   └── designs/            # Design Frameworks and Diagrams
 │
 ├── docs/                   # Platform and implementation documentation
 │
@@ -252,6 +253,7 @@ Mercury is guided by a small set of platform principles:
 
 Mercury is being developed incrementally.
 
+```text
 Phase 0 — Foundation                 [x]
         ↓
 Phase 1 — Ingestion                  [x]
@@ -263,6 +265,7 @@ Phase 3 — Analytics Engineering      [wip]
 Phase 4 — Production Platform
         ↓
 Phase 5 — Data Products
+```
 
 ## Current Focus
 
