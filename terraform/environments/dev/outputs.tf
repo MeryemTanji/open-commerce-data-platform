@@ -7,3 +7,8 @@ output "staging_dataset_location" {
   description = "Physical BigQuery location of the Mercury staging dataset."
   value       = google_bigquery_dataset.staging.location
 }
+
+output "dataform_service_account_email" {
+  description = "Email address of the Mercury Dataform transformation service account."
+  value       = google_service_account.dataform.email
+}
