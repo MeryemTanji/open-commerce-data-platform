@@ -223,47 +223,38 @@ The runtime is not intended to serve as a general Mercury administrator or as th
 
 ### 6.2 Dataform Transformation Identity
 
-**Status:** In progress
+**Status:** Implemented and validated
 
-Mercury will use a separate workload identity for analytical transformations rather than extending the ingestion runtime identity.
-
-Intended responsibility:
+Mercury uses a dedicated workload identity for analytical transformations:
 
 ```text
-BigQuery Raw
-      │
-      │ READ
-      ▼
-Dataform Transformation Runtime
-      │
-      │ WRITE / READ
-      ▼
-BigQuery Staging
+mercury-dataform@mercury-data-platform-dev.iam.gserviceaccount.com
 ```
 
-The intended permission boundary is:
+This identity is separate from mercury-runtime, which remains responsible for ingestion and operational Raw-platform execution.
 
-```text
-Project
-└── BigQuery job execution
+The deployed permission boundary is:
 
-raw dataset
-└── read
+| Scope                               | Role                        | Capability               |
+| ----------------------------------- | --------------------------- | ------------------------ |
+| Project `mercury-data-platform-dev` | `roles/bigquery.jobUser`    | Execute BigQuery jobs    |
+| BigQuery dataset `raw`              | `roles/bigquery.dataViewer` | Read Raw tables and data |
+| BigQuery dataset `staging`          | `roles/bigquery.dataEditor` | Manage staging relations |
 
-staging dataset
-└── read / write
-```
+The approved developer identity may impersonate mercury-dataform through a service-account-scoped roles/iam.serviceAccountTokenCreator grant. Local Dataform execution therefore uses short-lived impersonated credentials rather than a service-account key.
 
-The transformation identity should not require:
+The transformation identity does not have:
 
-    GCS Raw access
-    Raw modification
-    arbitrary dataset creation
-    IAM administration
-    service-account administration
-    access to unrelated datasets
+GCS Raw access;
+BigQuery Raw modification rights;
+access to the metadata dataset;
+arbitrary dataset-creation permissions;
+IAM or service-account administration;
+broad Editor, Owner, BigQuery Admin, or Storage Admin roles.
 
-The exact service-account and IAM configuration will be recorded here after implementation and validation.
+The service account and its IAM relationships are managed through Terraform.
+
+Detailed positive and negative validation evidence is recorded in [Dataform Transformation Identity Validation](../security/dataform-transformation-identity-validation.md).
 
 ## 7. Terraform
 
@@ -278,20 +269,26 @@ terraform/
         ├── providers.tf
         ├── variables.tf
         ├── main.tf
+        ├── iam.tf
         ├── outputs.tf
         └── .terraform.lock.hcl
 ```
 
-The initial Terraform implementation manages the BigQuery staging dataset.
+The current Terraform implementation manages:
+
+- the BigQuery `staging` dataset;
+- the dedicated Dataform transformation service account;
+- the Dataform identity’s project-level BigQuery job role;
+- dataset-scoped access to `raw` and `staging`;
+- service-account-scoped developer impersonation for local validation.
 
 Mercury is adopting Terraform incrementally rather than attempting to migrate all existing infrastructure into Infrastructure as Code at once.
 
 Future candidates for Terraform management include:
 
-- additional BigQuery datasets;
+- additional BigQuery datasets and their existing access policies;
 - Cloud Storage infrastructure;
-- service accounts;
-- IAM bindings;
+- remaining workload identities and IAM relationships;
 - Cloud Run;
 - Cloud Scheduler;
 - other production infrastructure.
@@ -395,40 +392,41 @@ mercury-data-platform-dev
         │
         ├── Service Accounts
         │   ├── mercury-runtime
-        │   └── Dataform transformation identity
-        │       └── IN PROGRESS
+        │   └── mercury-dataform
         │
         └── Terraform
-            └── staging dataset management
+            ├── staging dataset
+            ├── Dataform service account
+            └── Dataform IAM boundary
 ```
 
-## 11. Next Infrastructure Milestone
+## 11. Current Infrastructure Position
 
-The next infrastructure task is to establish and validate the dedicated Dataform transformation identity.
+The dedicated Dataform transformation identity and its least-privilege IAM boundary are implemented and validated.
 
-The implementation sequence is:
+The completed boundary provides:
 
 ```text
-Create dedicated transformation identity
-             ↓
-Grant BigQuery job execution
-             ↓
-Grant Raw read access
-             ↓
-Grant Staging read/write access
-             ↓
-Validate prohibited capabilities
-             ↓
-Execute Dataform under intended boundary
+BigQuery job execution
+        +
+Raw read-only access
+        +
+Staging read/write access
+        +
+short-lived developer impersonation
 ```
 
-After this is complete, this document should be updated with the final service-account name, IAM scopes, and validation results.
+Validation confirmed that the identity cannot modify Raw, create arbitrary datasets, access Raw GCS, or access the BigQuery metadata control plane.
+
+The transformation infrastructure is ready for the remaining Olist staging models. Broader Terraform adoption will continue incrementally as additional infrastructure enters active implementation scope.
+
+Detailed validation evidence is maintained in [Dataform Transformation Identity Validation](../security/dataform-transformation-identity-validation.md).
 
 ## 12. Related Documentation
 
 Architectural Decisions:
 
-    architecutre/decisions/
+    architecture/decisions/
 
 Relevant ADRs:
 
@@ -444,4 +442,4 @@ Security implementation evidence:
 
 Analytics-engineering implementation contract:
 
-    docs/olist_staging_contracts.md
+    docs/analytics/staging/olist_staging_contracts.md

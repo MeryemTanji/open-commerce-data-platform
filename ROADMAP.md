@@ -206,12 +206,12 @@ Phase 3 transforms source-faithful Raw data into standardised, tested, analytica
 - [x] Preserve europe-west4 regional placement
 - [x] Establish Terraform/Dataform ownership boundary
 - [x] Protect Terraform state, plans, and local variables from source control
-- [] Create dedicated Dataform transformation service account
-- [] Grant project-level BigQuery job execution
-- [] Grant read-only access to BigQuery Raw
-- [] Grant required read/write access to BigQuery Staging
-- [] Validate prohibited transformation capabilities
-- [] Execute Dataform using the intended transformation security boundary
+- [x] Create dedicated Dataform transformation service account
+- [x] Grant project-level BigQuery job execution
+- [x] Grant read-only access to BigQuery Raw
+- [x] Grant required read/write access to BigQuery Staging
+- [x] Validate prohibited transformation capabilities
+- [x] Execute Dataform using the intended transformation security boundary
 
 #### 3.3 Complete Staging Layer
 
