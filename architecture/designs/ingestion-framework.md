@@ -142,8 +142,8 @@ The Olist dataset is provided as a collection of static historical CSV files. To
 
 Mercury Version 1 distinguishes between:
 
-**1. initial / one-off source loads;**
-**2. daily incremental source loads.**
+- **1. initial / one-off source loads;**
+- **2. daily incremental source loads.**
 
 The framework does not fabricate timestamps or artificial update histories for datasets that do not contain reliable temporal information.
 
@@ -166,7 +166,7 @@ This keeps the simulation grounded in the source rather than manufacturing tempo
 
 Reference sources currently remain outside the transactional replay and targeted-recovery lifecycle.
 
-#### Daily Incremental Loading Jobs
+### Daily Incremental Loading Jobs
 
 Transactional sources with reliable temporal information are replayed as daily incremental deliveries.
 
@@ -196,7 +196,7 @@ A valid incremental source delivery may contain zero business records.
 
 A zero-record delivery remains a valid delivery and is distinct from a source delivery being absent altogether.
 
-#### Simulated Delivery and Ingestion Dates
+### Simulated Delivery and Ingestion Dates
 
 Mercury distinguishes the business date represented by a source delivery from the date on which that delivery is ingested.
 
@@ -469,19 +469,19 @@ Two provenance entities connect Raw artifacts with warehouse materialisation:
 
 Together they establish lineage across:
 
-```text
-Source Delivery
-      ↓
-Immutable Raw Artifact
-      ↓
-Raw Artifact Provenance
-      ↓
-Warehouse Load
-      ↓
-Warehouse Load Provenance
-      ↓
-BigQuery Raw
-```
+    ```text
+    Source Delivery
+        ↓
+    Immutable Raw Artifact
+        ↓
+    Raw Artifact Provenance
+        ↓
+    Warehouse Load
+        ↓
+    Warehouse Load Provenance
+        ↓
+    BigQuery Raw
+    ```
 
 Raw artifact provenance records the physical identity and integrity characteristics of a landed artifact.
 

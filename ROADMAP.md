@@ -37,16 +37,16 @@ Mercury's project and architectural foundation was established before platform i
 
 #### Completed
 
-[x] Create project repository and development structure
-[x] Define Mercury vision and scope
-[x] Create Project Charter
-[x] Define Nova Commerce business context
-[x] Establish layered platform architecture
-[x] Define immutable Raw principle
-[x] Define canonical modelling direction
-[x] Define data-product direction
-[x] Establish Architecture Decision Record process
-[x] Establish project documentation structure
+- [x] Create project repository and development structure
+- [x] Define Mercury vision and scope
+- [x] Create Project Charter
+- [x] Define Nova Commerce business context
+- [x] Establish layered platform architecture
+- [x] Define immutable Raw principle
+- [x] Define canonical modelling direction
+- [x] Define data-product direction
+- [x] Establish Architecture Decision Record process
+- [x] Establish project documentation structure
 
 #### Outcome
 
@@ -60,39 +60,39 @@ Phase 1 established Mercury's reusable ingestion framework and source-delivery m
 
 #### Connector Framework
 
-[x] Implement reusable connector architecture
-[x] Implement all eight Olist source connectors
-[x] Introduce shared CSV connector abstraction
-[x] Preserve source fidelity during ingestion
-[x] Generate consistent ingestion metadata
-[x] Preserve SHA-256 artifact integrity metadata
+- [x] Implement reusable connector architecture
+- [x] Implement all eight Olist source connectors
+- [x] Introduce shared CSV connector abstraction
+- [x] Preserve source fidelity during ingestion
+- [x] Generate consistent ingestion metadata
+- [x] Preserve SHA-256 artifact integrity metadata
 
 #### Storage
 
-[x] Introduce shared storage abstraction
-[x] Implement local Raw storage
-[x] Implement Google Cloud Storage backend
-[x] Preserve deterministic Raw Landing hierarchy
-[x] Implement immutable create-only cloud uploads
-[x] Keep connectors independent of physical storage backend
+- [x] Introduce shared storage abstraction
+- [x] Implement local Raw storage
+- [x] Implement Google Cloud Storage backend
+- [x] Preserve deterministic Raw Landing hierarchy
+- [x] Implement immutable create-only cloud uploads
+- [x] Keep connectors independent of physical storage backend
 
 #### Source Delivery
 
-[x] Define initial vs incremental source-delivery semantics
-[x] Implement Olist historical source simulation
-[x] Implement one-off reference deliveries
-[x] Implement daily transactional deliveries
-[x] Preserve valid zero-record deliveries
-[x] Introduce reusable source-delivery abstractions
-[x] Validate expected source membership
+- [x] Define initial vs incremental source-delivery semantics
+- [x] Implement Olist historical source simulation
+- [x] Implement one-off reference deliveries
+- [x] Implement daily transactional deliveries
+- [x] Preserve valid zero-record deliveries
+- [x] Introduce reusable source-delivery abstractions
+- [x] Validate expected source membership
 
 #### Historical Replay
 
-[x] Implement historical replay orchestration
-[x] Separate reference loading from transactional replay
-[x] Implement chronological date-range replay
-[x] Preserve source-level failure isolation
-[x] Validate replay against real GCS infrastructure
+- [x] Implement historical replay orchestration
+- [x] Separate reference loading from transactional replay
+- [x] Implement chronological date-range replay
+- [x] Preserve source-level failure isolation
+- [x] Validate replay against real GCS infrastructure
 
 #### Outcome
 
@@ -106,57 +106,57 @@ Phase 2 extended ingestion into a durable cloud Raw platform with warehouse load
 
 #### BigQuery Raw
 
-[x] Create BigQuery Raw dataset
-[x] Define explicit Raw schemas
-[x] Implement reusable BigQuery Raw loader
-[x] Implement reference-table loading
-[x] Implement transactional partition loading
-[x] Preserve source-faithful Raw values
-[x] Validate Raw loading against real BigQuery
+- [x] Create BigQuery Raw dataset
+- [x] Define explicit Raw schemas
+- [x] Implement reusable BigQuery Raw loader
+- [x] Implement reference-table loading
+- [x] Implement transactional partition loading
+- [x] Preserve source-faithful Raw values
+- [x] Validate Raw loading against real BigQuery
 
 #### Replay State
 
-[x] Define source-level replay-state model
-[x] Implement append-only replay history
-[x] Implement BigQuery-backed replay-state persistence
-[x] Integrate durable state with historical replay
-[x] Introduce execution-level run_id
-[x] Preserve ingestion and warehouse stage separation
-[x] Distinguish latest execution from logical completion
-[x] Implement monotonic logical-completion semantics
-[x] Derive date completeness from durable source state
+- [x] Define source-level replay-state model
+- [x] Implement append-only replay history
+- [x] Implement BigQuery-backed replay-state persistence
+- [x] Integrate durable state with historical replay
+- [x] Introduce execution-level run_id
+- [x] Preserve ingestion and warehouse stage separation
+- [x] Distinguish latest execution from logical completion
+- [x] Implement monotonic logical-completion semantics
+- [x] Derive date completeness from durable source state
 
 #### Targeted Recovery
 
-[x] Implement stage-aware recovery planning
-[x] Implement targeted recovery execution
-[x] Avoid repeating already-complete source work
-[x] Support ingestion-and-load recovery
-[x] Support warehouse-only recovery
-[x] Reuse validated immutable Raw artifacts
-[x] Preserve append-only recovery history
-[x] Route ambiguous cases to reconciliation or manual review
+- [x] Implement stage-aware recovery planning
+- [x] Implement targeted recovery execution
+- [x] Avoid repeating already-complete source work
+- [x] Support ingestion-and-load recovery
+- [x] Support warehouse-only recovery
+- [x] Reuse validated immutable Raw artifacts
+- [x] Preserve append-only recovery history
+- [x] Route ambiguous cases to reconciliation or manual review
 
 #### Provenance & Reconciliation
 
-[x] Implement Raw artifact provenance
-[x] Implement warehouse-load provenance
-[x] Establish Raw-artifact-to-warehouse-load physical lineage
-[x] Implement metadata-only GCS artifact inspection
-[x] Implement metadata-only BigQuery partition inspection
-[x] Implement provenance-backed reconciliation
-[x] Block automatic recovery when evidence is missing or contradictory
+- [x] Implement Raw artifact provenance
+- [x] Implement warehouse-load provenance
+- [x] Establish Raw-artifact-to-warehouse-load physical lineage
+- [x] Implement metadata-only GCS artifact inspection
+- [x] Implement metadata-only BigQuery partition inspection
+- [x] Implement provenance-backed reconciliation
+- [x] Block automatic recovery when evidence is missing or contradictory
 
 #### Security Hardening
 
-[x] Establish platform-wide security contract
-[x] Implement PII-safe operational error handling
-[x] Validate immutable Raw storage protections
-[x] Establish dedicated runtime workload identity
-[x] Remove long-lived runtime service-account key dependency
-[x] Apply least-privilege runtime permissions
-[x] Separate business Raw data from operational control-plane metadata
-[x] Validate security controls against deployed GCP infrastructure
+- [x] Establish platform-wide security contract
+- [x] Implement PII-safe operational error handling
+- [x] Validate immutable Raw storage protections
+- [x] Establish dedicated runtime workload identity
+- [x] Remove long-lived runtime service-account key dependency
+- [x] Apply least-privilege runtime permissions
+- [x] Separate business Raw data from operational control-plane metadata
+- [x] Validate security controls against deployed GCP infrastructure
 
 
 #### Outcome
@@ -175,43 +175,43 @@ Phase 3 transforms source-faithful Raw data into standardised, tested, analytica
 
 **Status**: [x] Complete
 
-[x] Define reusable staging-layer standard
-[x] Define technical vs semantic staging responsibilities
-[x] Define blocking validation vs quality-observation boundary
-[x] Profile all eight Olist Raw sources
-[x] Define staging grain for all eight sources
-[x] Define staging keys
-[x] Define semantic data types
-[x] Define normalisation rules
-[x] Define nullability expectations
-[x] Define domain constraints
-[x] Document Olist staging contracts
-[x] Record staging architecture in ADR-012
+- [x] Define reusable staging-layer standard
+- [x] Define technical vs semantic staging responsibilities
+- [x] Define blocking validation vs quality-observation boundary
+- [x] Profile all eight Olist Raw sources
+- [x] Define staging grain for all eight sources
+- [x] Define staging keys
+- [x] Define semantic data types
+- [x] Define normalisation rules
+- [x] Define nullability expectations
+- [x] Define domain constraints
+- [x] Document Olist staging contracts
+- [x] Record staging architecture in ADR-012
 
 #### 3.2 Dataform Foundation
 
 **Status**: [wip] In Progress
 
-[x] Introduce Dataform project structure
-[x] Configure Mercury Dataform project
-[x] Declare all eight BigQuery Raw sources
-[x] Implement first staging model: stg_customers
-[x] Introduce Dataform assertions
-[x] Validate Dataform compilation locally
-[x] Validate BigQuery dry-run execution
-[x] Protect local Dataform credentials from source control
-[x] Introduce Terraform project structure
-[x] Configure Terraform development environment
-[x] Bring BigQuery staging dataset under Terraform management
-[x] Preserve europe-west4 regional placement
-[x] Establish Terraform/Dataform ownership boundary
-[x] Protect Terraform state, plans, and local variables from source control
-[] Create dedicated Dataform transformation service account
-[] Grant project-level BigQuery job execution
-[] Grant read-only access to BigQuery Raw
-[] Grant required read/write access to BigQuery Staging
-[] Validate prohibited transformation capabilities
-[] Execute Dataform using the intended transformation security boundary
+- [x] Introduce Dataform project structure
+- [x] Configure Mercury Dataform project
+- [x] Declare all eight BigQuery Raw sources
+- [x] Implement first staging model: stg_customers
+- [x] Introduce Dataform assertions
+- [x] Validate Dataform compilation locally
+- [x] Validate BigQuery dry-run execution
+- [x] Protect local Dataform credentials from source control
+- [x] Introduce Terraform project structure
+- [x] Configure Terraform development environment
+- [x] Bring BigQuery staging dataset under Terraform management
+- [x] Preserve europe-west4 regional placement
+- [x] Establish Terraform/Dataform ownership boundary
+- [x] Protect Terraform state, plans, and local variables from source control
+- [] Create dedicated Dataform transformation service account
+- [] Grant project-level BigQuery job execution
+- [] Grant read-only access to BigQuery Raw
+- [] Grant required read/write access to BigQuery Staging
+- [] Validate prohibited transformation capabilities
+- [] Execute Dataform using the intended transformation security boundary
 
 #### 3.3 Complete Staging Layer
 
@@ -219,33 +219,33 @@ Phase 3 transforms source-faithful Raw data into standardised, tested, analytica
 
 Implement the remaining Olist staging models according to the documented contracts.
 
-[x] stg_customers
-[] stg_orders
-[] stg_order_items
-[] stg_products
-[] stg_sellers
-[] stg_payments
-[] stg_reviews
-[] stg_geolocations
+- [x] stg_customers
+- [] stg_orders
+- [] stg_order_items
+- [] stg_products
+- [] stg_sellers
+- [] stg_payments
+- [] stg_reviews
+- [] stg_geolocations
 
 For each staging model:
 
-[] apply documented semantic types;
-[] apply documented normalisation;
-[] implement blocking assertions where justified;
-[] preserve source-quality anomalies where required;
-[] compile and validate through Dataform;
-[] validate resulting BigQuery relation.
+- [] apply documented semantic types;
+- [] apply documented normalisation;
+- [] implement blocking assertions where justified;
+- [] preserve source-quality anomalies where required;
+- [] compile and validate through Dataform;
+- [] validate resulting BigQuery relation.
 
 #### 3.4 Staging Quality Layer
 
 **Status**: [] Planned
 
-[] Implement non-blocking source-quality observations
-[] Surface documented Olist source anomalies
-[] Separate source-quality reporting from transformation failure
-[] Define quality outputs suitable for downstream monitoring
-[] Validate quality behavior against profiled source findings
+- [] Implement non-blocking source-quality observations
+- [] Surface documented Olist source anomalies
+- [] Separate source-quality reporting from transformation failure
+- [] Define quality outputs suitable for downstream monitoring
+- [] Validate quality behavior against profiled source findings
 
 #### 3.5 Relationship Exploration
 
@@ -253,12 +253,12 @@ For each staging model:
 
 Before implementing the canonical model:
 
-[] profile relationships between staged entities
-[] validate expected parent-child relationships
-[] investigate referential-integrity gaps
-[] validate cardinalities
-[] identify modelling implications of source anomalies
-[] document canonical modelling inputs and decisions
+- [] profile relationships between staged entities
+- [] validate expected parent-child relationships
+- [] investigate referential-integrity gaps
+- [] validate cardinalities
+- [] identify modelling implications of source anomalies
+- [] document canonical modelling inputs and decisions
 
 #### 3.6 Canonical Business Model
 
@@ -270,18 +270,18 @@ Expected model direction includes:
 
 ##### Dimensions
 
-[] Customer
-[] Product
-[] Seller
-[] Date
-[] Location
+- [] Customer
+- [] Product
+- [] Seller
+- [] Date
+- [] Location
 
 ##### Facts
 
-[] Orders
-[] Order Items
-[] Payments
-[] Reviews
+- [] Orders
+- [] Order Items
+- [] Payments
+- [] Reviews
 
 Final model grain, relationships, and naming should be confirmed from staged-data exploration rather than assumed from the Raw source structure.
 
@@ -289,13 +289,13 @@ Final model grain, relationships, and naming should be confirmed from staged-dat
 
 Phase 3 is complete when:
 
-[] Dataform executes through a dedicated least-privilege transformation identity;
-[] all eight Raw sources have implemented staging models;
-[] blocking staging assertions are operational;
-[] non-blocking quality observations are operational;
-[] staged relationships have been profiled and validated;
-[] the canonical business model is implemented and tested;
-[] analytical transformation infrastructure is reproducible through the intended Terraform/Dataform ownership model.
+- [] Dataform executes through a dedicated least-privilege transformation identity;
+- [] all eight Raw sources have implemented staging models;
+- [] blocking staging assertions are operational;
+- [] non-blocking quality observations are operational;
+- [] staged relationships have been profiled and validated;
+- [] the canonical business model is implemented and tested;
+- [] analytical transformation infrastructure is reproducible through the intended Terraform/Dataform ownership model.
 
 ### Phase 4 — Production Platform
 
@@ -309,43 +309,43 @@ Terraform adoption has begun during Phase 3 where infrastructure ownership is re
 
 Phase 4 will expand infrastructure management to the broader Mercury runtime.
 
-[x] Introduce Terraform
-[x] Bring staging dataset under Terraform management
-[] Evaluate existing GCP resources for Terraform adoption
-[] Manage production runtime infrastructure through Terraform
-[] Manage production IAM through Infrastructure as Code
+- [x] Introduce Terraform
+- [x] Bring staging dataset under Terraform management
+- [] Evaluate existing GCP resources for Terraform adoption
+- [] Manage production runtime infrastructure through Terraform
+- [] Manage production IAM through Infrastructure as Code
 
 #### Runtime & Scheduling
 
-[] Deploy ingestion runtime to Cloud Run
-[] Implement scheduled execution with Cloud Scheduler
-[] Define production runtime configuration
-[] Validate keyless workload authentication
+- [] Deploy ingestion runtime to Cloud Run
+- [] Implement scheduled execution with Cloud Scheduler
+- [] Define production runtime configuration
+- [] Validate keyless workload authentication
 
 #### Observability
 
-[] Implement cloud logging
-[] Implement operational monitoring
-[] Define alerting strategy
-[] Surface ingestion/replay/recovery status
-[] Ensure production telemetry conforms to ADR-011
+- [] Implement cloud logging
+- [] Implement operational monitoring
+- [] Define alerting strategy
+- [] Surface ingestion/replay/recovery status
+- [] Ensure production telemetry conforms to ADR-011
 
 #### CI/CD
 
-[] Introduce GitHub Actions
-[] Automate test execution
-[] Automate formatting and linting
-[] Add dependency/security scanning
-[] Add infrastructure validation
-[] Define deployment workflow
+- [] Introduce GitHub Actions
+- [] Automate test execution
+- [] Automate formatting and linting
+- [] Add dependency/security scanning
+- [] Add infrastructure validation
+- [] Define deployment workflow
 
 #### Operations
 
-[] Create recovery runbook
-[] Create manual-review runbook
-[] Define operational escalation paths
-[] Define production retention policies
-[] Create developer/operations documentation where required
+- [] Create recovery runbook
+- [] Create manual-review runbook
+- [] Define operational escalation paths
+- [] Define production retention policies
+- [] Create developer/operations documentation where required
 
 #### Phase 4 Exit Criteria
 
@@ -363,38 +363,38 @@ Final products will be selected based on the canonical model and the analytical 
 
 ##### Customer Analytics
 
-[] Customer 360
-[] Customer segmentation
-[] Customer lifetime value
+- [] Customer 360
+- [] Customer segmentation
+- [] Customer lifetime value
 
 ##### Sales Analytics
 
-[] Sales performance
-[] Revenue trends
-[] Product performance
+- [] Sales performance
+- [] Revenue trends
+- [] Product performance
 
 ##### Operations Analytics
 
-[] Delivery performance
-[] Seller performance
-[] Payment analytics
+- [] Delivery performance
+- [] Seller performance
+- [] Payment analytics
 
 ##### Business Intelligence
 
-[] Looker Studio dashboard
+- [] Looker Studio dashboard
 
 ##### Application
 
-[] Streamlit application
-[] Customer explorer
-[] Order explorer
-[] Seller explorer
-[] Platform monitoring
+- [] Streamlit application
+- [] Customer explorer
+- [] Order explorer
+- [] Seller explorer
+- [] Platform monitoring
 
 ##### Data Science / ML
 
-[] Demonstrate reusable feature generation from canonical data
-[] Implement at least one analytical or ML example where useful
+- [] Demonstrate reusable feature generation from canonical data
+- [] Implement at least one analytical or ML example where useful
 
 #### Phase 5 Exit Criteria
 
@@ -404,15 +404,15 @@ Phase 5 is complete when Mercury demonstrates that multiple downstream products 
 
 The following capabilities are intentionally deferred unless a concrete requirement justifies introducing them.
 
-[] Production SaaS/API source connectors
-[] REST API ingestion
-[] Change Data Capture
-[] Real-time streaming
-[] Automated schema evolution
-[] Additional storage or warehouse backends
-[] Advanced feature-store capabilities
-[] Advanced table formats where justified
-[] Container-orchestration platforms beyond the requirements of Mercury's runtime
+- [] Production SaaS/API source connectors
+- [] REST API ingestion
+- [] Change Data Capture
+- [] Real-time streaming
+- [] Automated schema evolution
+- [] Additional storage or warehouse backends
+- [] Advanced feature-store capabilities
+- [] Advanced table formats where justified
+- [] Container-orchestration platforms beyond the requirements of Mercury's runtime
 
 These are not required to demonstrate Mercury's Version 1 platform architecture.
 
