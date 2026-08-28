@@ -313,7 +313,7 @@ The platform currently provides a working path from source delivery to immutable
 
 Analytics Engineering is now in progress using Dataform and Terraform-managed infrastructure.
 
-The immediate objective is to complete the reusable staging layer and its quality controls before designing Mercury's canonical business model and downstream data
+The immediate objective is to complete the reusable staging layer and its quality controls before designing Mercury's canonical business model and downstream data products.
 
 ## License
 
