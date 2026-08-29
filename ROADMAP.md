@@ -190,7 +190,7 @@ Phase 3 transforms source-faithful Raw data into standardised, tested, analytica
 
 #### 3.2 Dataform Foundation
 
-**Status**: [wip] In Progress
+**Status**: [x] Complete
 
 - [x] Introduce Dataform project structure
 - [x] Configure Mercury Dataform project
@@ -215,54 +215,55 @@ Phase 3 transforms source-faithful Raw data into standardised, tested, analytica
 
 #### 3.3 Complete Staging Layer
 
-**Status**: [] Planned
+**Status**: [wip] In progress
 
 Implement the remaining Olist staging models according to the documented contracts.
 
 - [x] stg_customers
-- [] stg_orders
-- [] stg_order_items
-- [] stg_products
-- [] stg_sellers
-- [] stg_payments
-- [] stg_reviews
-- [] stg_geolocations
+- [x] stg_orders
+- [ ] stg_order_items
+- [ ] stg_products
+- [ ] stg_sellers
+- [ ] stg_payments
+- [ ] stg_reviews
+- [ ] stg_geolocations
 
 For each staging model:
 
-- [] apply documented semantic types;
-- [] apply documented normalisation;
-- [] implement blocking assertions where justified;
-- [] preserve source-quality anomalies where required;
-- [] compile and validate through Dataform;
-- [] validate resulting BigQuery relation.
+- [ ] apply documented semantic types;
+- [ ] apply documented normalisation;
+- [ ] implement blocking assertions where justified;
+- [ ] preserve source-quality anomalies where required;
+- [ ] compile and validate through Dataform;
+- [ ] validate resulting BigQuery relation.
 
 #### 3.4 Staging Quality Layer
 
-**Status**: [] Planned
+**Status**: [wip] In Progress
 
-- [] Implement non-blocking source-quality observations
-- [] Surface documented Olist source anomalies
-- [] Separate source-quality reporting from transformation failure
-- [] Define quality outputs suitable for downstream monitoring
-- [] Validate quality behavior against profiled source findings
+- [x] Implement and validate `dq_orders_lifecycle_anomalies`
+- [ ] Implement non-blocking source-quality observations
+- [ ] Surface documented Olist source anomalies
+- [ ] Separate source-quality reporting from transformation failure
+- [ ] Define quality outputs suitable for downstream monitoring
+- [ ] Validate quality behavior against profiled source findings
 
 #### 3.5 Relationship Exploration
 
-**Status**: [] Planned
+**Status**: [ ] Planned
 
 Before implementing the canonical model:
 
-- [] profile relationships between staged entities
-- [] validate expected parent-child relationships
-- [] investigate referential-integrity gaps
-- [] validate cardinalities
-- [] identify modelling implications of source anomalies
-- [] document canonical modelling inputs and decisions
+- [ ] profile relationships between staged entities
+- [ ] validate expected parent-child relationships
+- [ ] investigate referential-integrity gaps
+- [ ] validate cardinalities
+- [ ] identify modelling implications of source anomalies
+- [ ] document canonical modelling inputs and decisions
 
 #### 3.6 Canonical Business Model
 
-**Status**: [] Planned
+**Status**: [ ] Planned
 
 Implement Mercury's reusable business-oriented model above staging.
 
@@ -270,18 +271,18 @@ Expected model direction includes:
 
 ##### Dimensions
 
-- [] Customer
-- [] Product
-- [] Seller
-- [] Date
-- [] Location
+- [ ] Customer
+- [ ] Product
+- [ ] Seller
+- [ ] Date
+- [ ] Location
 
 ##### Facts
 
-- [] Orders
-- [] Order Items
-- [] Payments
-- [] Reviews
+- [ ] Orders
+- [ ] Order Items
+- [ ] Payments
+- [ ] Reviews
 
 Final model grain, relationships, and naming should be confirmed from staged-data exploration rather than assumed from the Raw source structure.
 
@@ -289,17 +290,17 @@ Final model grain, relationships, and naming should be confirmed from staged-dat
 
 Phase 3 is complete when:
 
-- [] Dataform executes through a dedicated least-privilege transformation identity;
-- [] all eight Raw sources have implemented staging models;
-- [] blocking staging assertions are operational;
-- [] non-blocking quality observations are operational;
-- [] staged relationships have been profiled and validated;
-- [] the canonical business model is implemented and tested;
-- [] analytical transformation infrastructure is reproducible through the intended Terraform/Dataform ownership model.
+- [ ] Dataform executes through a dedicated least-privilege transformation identity;
+- [ ] all eight Raw sources have implemented staging models;
+- [ ] blocking staging assertions are operational;
+- [ ] non-blocking quality observations are operational;
+- [ ] staged relationships have been profiled and validated;
+- [ ] the canonical business model is implemented and tested;
+- [ ] analytical transformation infrastructure is reproducible through the intended Terraform/Dataform ownership model.
 
 ### Phase 4 — Production Platform
 
-**Status**: [] Planned
+**Status**: [ ] Planned
 
 Phase 4 will operationalise Mercury beyond local development and manually initiated cloud execution.
 
@@ -311,41 +312,41 @@ Phase 4 will expand infrastructure management to the broader Mercury runtime.
 
 - [x] Introduce Terraform
 - [x] Bring staging dataset under Terraform management
-- [] Evaluate existing GCP resources for Terraform adoption
-- [] Manage production runtime infrastructure through Terraform
-- [] Manage production IAM through Infrastructure as Code
+- [ ] Evaluate existing GCP resources for Terraform adoption
+- [ ] Manage production runtime infrastructure through Terraform
+- [ ] Manage production IAM through Infrastructure as Code
 
 #### Runtime & Scheduling
 
-- [] Deploy ingestion runtime to Cloud Run
-- [] Implement scheduled execution with Cloud Scheduler
-- [] Define production runtime configuration
-- [] Validate keyless workload authentication
+- [ ] Deploy ingestion runtime to Cloud Run
+- [ ] Implement scheduled execution with Cloud Scheduler
+- [ ] Define production runtime configuration
+- [ ] Validate keyless workload authentication
 
 #### Observability
 
-- [] Implement cloud logging
-- [] Implement operational monitoring
-- [] Define alerting strategy
-- [] Surface ingestion/replay/recovery status
-- [] Ensure production telemetry conforms to ADR-011
+- [ ] Implement cloud logging
+- [ ] Implement operational monitoring
+- [ ] Define alerting strategy
+- [ ] Surface ingestion/replay/recovery status
+- [ ] Ensure production telemetry conforms to ADR-011
 
 #### CI/CD
 
-- [] Introduce GitHub Actions
-- [] Automate test execution
-- [] Automate formatting and linting
-- [] Add dependency/security scanning
-- [] Add infrastructure validation
-- [] Define deployment workflow
+- [ ] Introduce GitHub Actions
+- [ ] Automate test execution
+- [ ] Automate formatting and linting
+- [ ] Add dependency/security scanning
+- [ ] Add infrastructure validation
+- [ ] Define deployment workflow
 
 #### Operations
 
-- [] Create recovery runbook
-- [] Create manual-review runbook
-- [] Define operational escalation paths
-- [] Define production retention policies
-- [] Create developer/operations documentation where required
+- [ ] Create recovery runbook
+- [ ] Create manual-review runbook
+- [ ] Define operational escalation paths
+- [ ] Define production retention policies
+- [ ] Create developer/operations documentation where required
 
 #### Phase 4 Exit Criteria
 
@@ -353,7 +354,7 @@ Phase 4 is complete when Mercury can be deployed, scheduled, monitored, validate
 
 ### Phase 5 — Data Products
 
-**Status**: [] Planned
+**Status**: [ ] Planned
 
 Phase 5 demonstrates how reusable business data can support multiple downstream use cases without rebuilding the underlying data foundation.
 
@@ -363,38 +364,38 @@ Final products will be selected based on the canonical model and the analytical 
 
 ##### Customer Analytics
 
-- [] Customer 360
-- [] Customer segmentation
-- [] Customer lifetime value
+- [ ] Customer 360
+- [ ] Customer segmentation
+- [ ] Customer lifetime value
 
 ##### Sales Analytics
 
-- [] Sales performance
-- [] Revenue trends
-- [] Product performance
+- [ ] Sales performance
+- [ ] Revenue trends
+- [ ] Product performance
 
 ##### Operations Analytics
 
-- [] Delivery performance
-- [] Seller performance
-- [] Payment analytics
+- [ ] Delivery performance
+- [ ] Seller performance
+- [ ] Payment analytics
 
 ##### Business Intelligence
 
-- [] Looker Studio dashboard
+- [ ] Looker Studio dashboard
 
 ##### Application
 
-- [] Streamlit application
-- [] Customer explorer
-- [] Order explorer
-- [] Seller explorer
-- [] Platform monitoring
+- [ ] Streamlit application
+- [ ] Customer explorer
+- [ ] Order explorer
+- [ ] Seller explorer
+- [ ] Platform monitoring
 
 ##### Data Science / ML
 
-- [] Demonstrate reusable feature generation from canonical data
-- [] Implement at least one analytical or ML example where useful
+- [ ] Demonstrate reusable feature generation from canonical data
+- [ ] Implement at least one analytical or ML example where useful
 
 #### Phase 5 Exit Criteria
 
@@ -404,15 +405,15 @@ Phase 5 is complete when Mercury demonstrates that multiple downstream products 
 
 The following capabilities are intentionally deferred unless a concrete requirement justifies introducing them.
 
-- [] Production SaaS/API source connectors
-- [] REST API ingestion
-- [] Change Data Capture
-- [] Real-time streaming
-- [] Automated schema evolution
-- [] Additional storage or warehouse backends
-- [] Advanced feature-store capabilities
-- [] Advanced table formats where justified
-- [] Container-orchestration platforms beyond the requirements of Mercury's runtime
+- [ ] Production SaaS/API source connectors
+- [ ] REST API ingestion
+- [ ] Change Data Capture
+- [ ] Real-time streaming
+- [ ] Automated schema evolution
+- [ ] Additional storage or warehouse backends
+- [ ] Advanced feature-store capabilities
+- [ ] Advanced table formats where justified
+- [ ] Container-orchestration platforms beyond the requirements of Mercury's runtime
 
 These are not required to demonstrate Mercury's Version 1 platform architecture.
 

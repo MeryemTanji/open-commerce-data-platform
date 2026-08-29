@@ -694,8 +694,15 @@ The source currently contains:
 23 orders where customer delivery occurs before
 carrier delivery
 ```
+Orders with `delivered` status also include:
 
-Some orders with `delivered` status are also missing expected lifecycle timestamps.
+```text
+14 orders missing approval timestamps
+
+2 orders missing carrier-delivery timestamps
+
+8 orders missing customer-delivery timestamps
+```
 
 These records remain structurally interpretable.
 
