@@ -1,0 +1,57 @@
+config {
+  type: "table",
+  schema: "staging",
+  name: "stg_orders",
+  description: "Standardized Olist order records following ADR-012 and the Olist staging contract.",
+  assertions: {
+    nonNull: [
+      "order_id",
+      "customer_id",
+      "order_status",
+      "order_purchase_timestamp",
+      "order_estimated_delivery_date"
+    ],
+    uniqueKey: [
+      "order_id"
+    ]
+  }
+}
+
+SELECT
+  NULLIF(TRIM(order_id), '') AS order_id,
+
+  NULLIF(TRIM(customer_id), '') AS customer_id,
+
+  NULLIF(
+    LOWER(TRIM(order_status)),
+    ''
+  ) AS order_status,
+
+  SAFE_CAST(
+    NULLIF(TRIM(order_purchase_timestamp), '')
+    AS TIMESTAMP
+  ) AS order_purchase_timestamp,
+
+  SAFE_CAST(
+    NULLIF(TRIM(order_approved_at), '')
+    AS TIMESTAMP
+  ) AS order_approved_timestamp,
+
+  SAFE_CAST(
+    NULLIF(TRIM(order_delivered_carrier_date), '')
+    AS TIMESTAMP
+  ) AS order_delivered_carrier_timestamp,
+
+  SAFE_CAST(
+    NULLIF(TRIM(order_delivered_customer_date), '')
+    AS TIMESTAMP
+  ) AS order_delivered_customer_timestamp,
+
+  DATE(
+    SAFE_CAST(
+      NULLIF(TRIM(order_estimated_delivery_date), '')
+      AS TIMESTAMP
+    )
+  ) AS order_estimated_delivery_date
+
+FROM ${ref("orders")}

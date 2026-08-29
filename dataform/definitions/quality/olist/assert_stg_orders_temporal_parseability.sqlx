@@ -1,0 +1,58 @@
+config {
+  type: "assertion",
+  name: "assert_stg_orders_temporal_parseability",
+  description: "Fails when a non-empty Olist order temporal value cannot be parsed into its contracted semantic type."
+}
+
+SELECT
+  'order_purchase_timestamp' AS invalid_field,
+  COUNT(*) AS invalid_value_count
+FROM ${ref("orders")}
+WHERE
+  NULLIF(TRIM(order_purchase_timestamp), '') IS NOT NULL
+  AND SAFE_CAST(TRIM(order_purchase_timestamp) AS TIMESTAMP) IS NULL
+HAVING COUNT(*) > 0
+
+UNION ALL
+
+SELECT
+  'order_approved_at' AS invalid_field,
+  COUNT(*) AS invalid_value_count
+FROM ${ref("orders")}
+WHERE
+  NULLIF(TRIM(order_approved_at), '') IS NOT NULL
+  AND SAFE_CAST(TRIM(order_approved_at) AS TIMESTAMP) IS NULL
+HAVING COUNT(*) > 0
+
+UNION ALL
+
+SELECT
+  'order_delivered_carrier_date' AS invalid_field,
+  COUNT(*) AS invalid_value_count
+FROM ${ref("orders")}
+WHERE
+  NULLIF(TRIM(order_delivered_carrier_date), '') IS NOT NULL
+  AND SAFE_CAST(TRIM(order_delivered_carrier_date) AS TIMESTAMP) IS NULL
+HAVING COUNT(*) > 0
+
+UNION ALL
+
+SELECT
+  'order_delivered_customer_date' AS invalid_field,
+  COUNT(*) AS invalid_value_count
+FROM ${ref("orders")}
+WHERE
+  NULLIF(TRIM(order_delivered_customer_date), '') IS NOT NULL
+  AND SAFE_CAST(TRIM(order_delivered_customer_date) AS TIMESTAMP) IS NULL
+HAVING COUNT(*) > 0
+
+UNION ALL
+
+SELECT
+  'order_estimated_delivery_date' AS invalid_field,
+  COUNT(*) AS invalid_value_count
+FROM ${ref("orders")}
+WHERE
+  NULLIF(TRIM(order_estimated_delivery_date), '') IS NOT NULL
+  AND SAFE_CAST(TRIM(order_estimated_delivery_date) AS TIMESTAMP) IS NULL
+HAVING COUNT(*) > 0

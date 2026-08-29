@@ -1,0 +1,82 @@
+config {
+  type: "view",
+  schema: "staging",
+  name: "dq_orders_lifecycle_anomalies",
+  description: "Non-blocking Olist order lifecycle anomalies preserved for investigation under the staging contract."
+}
+
+SELECT
+  order_id,
+  order_status,
+  'carrier_before_purchase' AS anomaly_type,
+  order_purchase_timestamp,
+  order_approved_timestamp,
+  order_delivered_carrier_timestamp,
+  order_delivered_customer_timestamp,
+  order_estimated_delivery_date
+FROM ${ref("stg_orders")}
+WHERE
+  order_delivered_carrier_timestamp < order_purchase_timestamp
+
+UNION ALL
+
+SELECT
+  order_id,
+  order_status,
+  'customer_before_carrier' AS anomaly_type,
+  order_purchase_timestamp,
+  order_approved_timestamp,
+  order_delivered_carrier_timestamp,
+  order_delivered_customer_timestamp,
+  order_estimated_delivery_date
+FROM ${ref("stg_orders")}
+WHERE
+  order_delivered_customer_timestamp < order_delivered_carrier_timestamp
+
+UNION ALL
+
+SELECT
+  order_id,
+  order_status,
+  'delivered_missing_approval' AS anomaly_type,
+  order_purchase_timestamp,
+  order_approved_timestamp,
+  order_delivered_carrier_timestamp,
+  order_delivered_customer_timestamp,
+  order_estimated_delivery_date
+FROM ${ref("stg_orders")}
+WHERE
+  order_status = 'delivered'
+  AND order_approved_timestamp IS NULL
+
+UNION ALL
+
+SELECT
+  order_id,
+  order_status,
+  'delivered_missing_carrier_delivery' AS anomaly_type,
+  order_purchase_timestamp,
+  order_approved_timestamp,
+  order_delivered_carrier_timestamp,
+  order_delivered_customer_timestamp,
+  order_estimated_delivery_date
+FROM ${ref("stg_orders")}
+WHERE
+  order_status = 'delivered'
+  AND order_delivered_carrier_timestamp IS NULL
+
+UNION ALL
+
+SELECT
+  order_id,
+  order_status,
+  'delivered_missing_customer_delivery' AS anomaly_type,
+  order_purchase_timestamp,
+  order_approved_timestamp,
+  order_delivered_carrier_timestamp,
+  order_delivered_customer_timestamp,
+  order_estimated_delivery_date
+FROM ${ref("stg_orders")}
+WHERE
+  order_status = 'delivered'
+  AND order_delivered_customer_timestamp IS NULL
