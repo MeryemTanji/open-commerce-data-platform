@@ -614,6 +614,16 @@ The following fields are legitimately nullable:
 
 Mercury must not manufacture replacement values for missing product metadata.
 
+The source contains:
+
+- 610 products missing catalog-description attributes;
+- 2 products missing physical measurements;
+- 4 products with `product_weight_g = 0`.
+
+Missing product metadata remains `NULL`.
+
+Zero weight is preserved as a valid source value. It must not be silently converted to `NULL` or repaired, and is surfaced as a non-blocking quality observation.
+
 ## Known Quality Observations
 
 The source contains:

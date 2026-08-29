@@ -222,7 +222,7 @@ Implement the remaining Olist staging models according to the documented contrac
 - [x] stg_customers
 - [x] stg_orders
 - [x] stg_order_items
-- [ ] stg_products
+- [x] stg_products
 - [ ] stg_sellers
 - [ ] stg_payments
 - [ ] stg_reviews
@@ -242,6 +242,7 @@ For each staging model:
 **Status**: [wip] In Progress
 
 - [x] Implement and validate `dq_orders_lifecycle_anomalies`
+- [x] Implement and validate `dq_products_anomalies`
 - [ ] Implement non-blocking source-quality observations
 - [ ] Surface documented Olist source anomalies
 - [ ] Separate source-quality reporting from transformation failure
