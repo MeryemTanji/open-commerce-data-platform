@@ -1,0 +1,55 @@
+config {
+  type: "table",
+  schema: "staging",
+  name: "stg_order_items",
+  description: "Standardized Olist order-item records following ADR-012 and the Olist staging contract.",
+  assertions: {
+    nonNull: [
+      "order_id",
+      "order_item_id",
+      "product_id",
+      "seller_id",
+      "shipping_limit_timestamp",
+      "price",
+      "freight_value"
+    ],
+    uniqueKey: [
+      "order_id",
+      "order_item_id"
+    ],
+    rowConditions: [
+      "order_item_id >= 1",
+      "price >= 0",
+      "freight_value >= 0"
+    ]
+  }
+}
+
+SELECT
+  NULLIF(TRIM(order_id), '') AS order_id,
+
+  SAFE_CAST(
+    NULLIF(TRIM(order_item_id), '')
+    AS INT64
+  ) AS order_item_id,
+
+  NULLIF(TRIM(product_id), '') AS product_id,
+
+  NULLIF(TRIM(seller_id), '') AS seller_id,
+
+  SAFE_CAST(
+    NULLIF(TRIM(shipping_limit_date), '')
+    AS TIMESTAMP
+  ) AS shipping_limit_timestamp,
+
+  SAFE_CAST(
+    NULLIF(TRIM(price), '')
+    AS NUMERIC
+  ) AS price,
+
+  SAFE_CAST(
+    NULLIF(TRIM(freight_value), '')
+    AS NUMERIC
+  ) AS freight_value
+
+FROM ${ref("order_items")}
