@@ -768,7 +768,15 @@ The source field contains meaningful time-of-day information and is therefore ti
 - `price >= 0`;
 - `freight_value >= 0`.
 
+The current source contains:
+
+```text
+383 order items with freight_value = 0
+```
+
 Zero freight values remain valid source values and must not be converted to `NULL`.
+
+No non-blocking quality view is needed for this condition because the contract explicitly classifies zero freight as valid—not suspicious.
 
 ---
 

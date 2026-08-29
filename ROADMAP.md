@@ -221,7 +221,7 @@ Implement the remaining Olist staging models according to the documented contrac
 
 - [x] stg_customers
 - [x] stg_orders
-- [ ] stg_order_items
+- [x] stg_order_items
 - [ ] stg_products
 - [ ] stg_sellers
 - [ ] stg_payments
