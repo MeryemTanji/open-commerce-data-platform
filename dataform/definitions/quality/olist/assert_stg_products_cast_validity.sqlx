@@ -1,0 +1,80 @@
+config {
+  type: "assertion",
+  name: "assert_stg_products_cast_validity",
+  description: "Fails when a non-empty Olist product value cannot be converted to its contracted semantic type."
+}
+
+SELECT
+  'product_name_lenght' AS invalid_field,
+  COUNT(*) AS invalid_value_count
+FROM ${ref("products")}
+WHERE
+  NULLIF(TRIM(product_name_lenght), '') IS NOT NULL
+  AND SAFE_CAST(TRIM(product_name_lenght) AS INT64) IS NULL
+HAVING COUNT(*) > 0
+
+UNION ALL
+
+SELECT
+  'product_description_lenght' AS invalid_field,
+  COUNT(*) AS invalid_value_count
+FROM ${ref("products")}
+WHERE
+  NULLIF(TRIM(product_description_lenght), '') IS NOT NULL
+  AND SAFE_CAST(TRIM(product_description_lenght) AS INT64) IS NULL
+HAVING COUNT(*) > 0
+
+UNION ALL
+
+SELECT
+  'product_photos_qty' AS invalid_field,
+  COUNT(*) AS invalid_value_count
+FROM ${ref("products")}
+WHERE
+  NULLIF(TRIM(product_photos_qty), '') IS NOT NULL
+  AND SAFE_CAST(TRIM(product_photos_qty) AS INT64) IS NULL
+HAVING COUNT(*) > 0
+
+UNION ALL
+
+SELECT
+  'product_weight_g' AS invalid_field,
+  COUNT(*) AS invalid_value_count
+FROM ${ref("products")}
+WHERE
+  NULLIF(TRIM(product_weight_g), '') IS NOT NULL
+  AND SAFE_CAST(TRIM(product_weight_g) AS NUMERIC) IS NULL
+HAVING COUNT(*) > 0
+
+UNION ALL
+
+SELECT
+  'product_length_cm' AS invalid_field,
+  COUNT(*) AS invalid_value_count
+FROM ${ref("products")}
+WHERE
+  NULLIF(TRIM(product_length_cm), '') IS NOT NULL
+  AND SAFE_CAST(TRIM(product_length_cm) AS NUMERIC) IS NULL
+HAVING COUNT(*) > 0
+
+UNION ALL
+
+SELECT
+  'product_height_cm' AS invalid_field,
+  COUNT(*) AS invalid_value_count
+FROM ${ref("products")}
+WHERE
+  NULLIF(TRIM(product_height_cm), '') IS NOT NULL
+  AND SAFE_CAST(TRIM(product_height_cm) AS NUMERIC) IS NULL
+HAVING COUNT(*) > 0
+
+UNION ALL
+
+SELECT
+  'product_width_cm' AS invalid_field,
+  COUNT(*) AS invalid_value_count
+FROM ${ref("products")}
+WHERE
+  NULLIF(TRIM(product_width_cm), '') IS NOT NULL
+  AND SAFE_CAST(TRIM(product_width_cm) AS NUMERIC) IS NULL
+HAVING COUNT(*) > 0

@@ -1,0 +1,68 @@
+config {
+  type: "table",
+  schema: "staging",
+  name: "stg_products",
+  description: "Standardized Olist product records following ADR-012 and the Olist staging contract.",
+  assertions: {
+    nonNull: [
+      "product_id"
+    ],
+    uniqueKey: [
+      "product_id"
+    ],
+    rowConditions: [
+      "product_name_length IS NULL OR product_name_length >= 0",
+      "product_description_length IS NULL OR product_description_length >= 0",
+      "product_photos_count IS NULL OR product_photos_count >= 0",
+      "product_weight_g IS NULL OR product_weight_g >= 0",
+      "product_length_cm IS NULL OR product_length_cm >= 0",
+      "product_height_cm IS NULL OR product_height_cm >= 0",
+      "product_width_cm IS NULL OR product_width_cm >= 0"
+    ]
+  }
+}
+
+SELECT
+  NULLIF(TRIM(product_id), '') AS product_id,
+
+  NULLIF(
+    LOWER(TRIM(product_category_name)),
+    ''
+  ) AS product_category_name,
+
+  SAFE_CAST(
+    NULLIF(TRIM(product_name_lenght), '')
+    AS INT64
+  ) AS product_name_length,
+
+  SAFE_CAST(
+    NULLIF(TRIM(product_description_lenght), '')
+    AS INT64
+  ) AS product_description_length,
+
+  SAFE_CAST(
+    NULLIF(TRIM(product_photos_qty), '')
+    AS INT64
+  ) AS product_photos_count,
+
+  SAFE_CAST(
+    NULLIF(TRIM(product_weight_g), '')
+    AS NUMERIC
+  ) AS product_weight_g,
+
+  SAFE_CAST(
+    NULLIF(TRIM(product_length_cm), '')
+    AS NUMERIC
+  ) AS product_length_cm,
+
+  SAFE_CAST(
+    NULLIF(TRIM(product_height_cm), '')
+    AS NUMERIC
+  ) AS product_height_cm,
+
+  SAFE_CAST(
+    NULLIF(TRIM(product_width_cm), '')
+    AS NUMERIC
+  ) AS product_width_cm
+
+FROM ${ref("products")}

@@ -1,0 +1,61 @@
+config {
+  type: "view",
+  schema: "staging",
+  name: "dq_products_anomalies",
+  description: "Non-blocking Olist product metadata and measurement anomalies preserved for investigation under the staging contract."
+}
+
+SELECT
+  product_id,
+  'missing_catalog_metadata' AS anomaly_type,
+  product_category_name,
+  product_name_length,
+  product_description_length,
+  product_photos_count,
+  product_weight_g,
+  product_length_cm,
+  product_height_cm,
+  product_width_cm
+FROM ${ref("stg_products")}
+WHERE
+  product_category_name IS NULL
+  OR product_name_length IS NULL
+  OR product_description_length IS NULL
+  OR product_photos_count IS NULL
+
+UNION ALL
+
+SELECT
+  product_id,
+  'missing_physical_measurement' AS anomaly_type,
+  product_category_name,
+  product_name_length,
+  product_description_length,
+  product_photos_count,
+  product_weight_g,
+  product_length_cm,
+  product_height_cm,
+  product_width_cm
+FROM ${ref("stg_products")}
+WHERE
+  product_weight_g IS NULL
+  OR product_length_cm IS NULL
+  OR product_height_cm IS NULL
+  OR product_width_cm IS NULL
+
+UNION ALL
+
+SELECT
+  product_id,
+  'zero_product_weight' AS anomaly_type,
+  product_category_name,
+  product_name_length,
+  product_description_length,
+  product_photos_count,
+  product_weight_g,
+  product_length_cm,
+  product_height_cm,
+  product_width_cm
+FROM ${ref("stg_products")}
+WHERE
+  product_weight_g = 0
