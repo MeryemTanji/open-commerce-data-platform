@@ -1,0 +1,49 @@
+config {
+  type: "table",
+  schema: "staging",
+  name: "stg_payments",
+  description: "Standardized Olist payment records following ADR-012 and the Olist staging contract.",
+  assertions: {
+    nonNull: [
+      "order_id",
+      "payment_sequential",
+      "payment_type",
+      "payment_installments",
+      "payment_value"
+    ],
+    uniqueKey: [
+      "order_id",
+      "payment_sequential"
+    ],
+    rowConditions: [
+      "payment_sequential >= 1",
+      "payment_installments >= 0",
+      "payment_value >= 0"
+    ]
+  }
+}
+
+SELECT
+  NULLIF(TRIM(order_id), '') AS order_id,
+
+  SAFE_CAST(
+    NULLIF(TRIM(payment_sequential), '')
+    AS INT64
+  ) AS payment_sequential,
+
+  NULLIF(
+    LOWER(TRIM(payment_type)),
+    ''
+  ) AS payment_type,
+
+  SAFE_CAST(
+    NULLIF(TRIM(payment_installments), '')
+    AS INT64
+  ) AS payment_installments,
+
+  SAFE_CAST(
+    NULLIF(TRIM(payment_value), '')
+    AS NUMERIC
+  ) AS payment_value
+
+FROM ${ref("payments")}

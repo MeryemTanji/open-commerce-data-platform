@@ -1,0 +1,44 @@
+config {
+  type: "view",
+  schema: "staging",
+  name: "dq_payments_anomalies",
+  description: "Non-blocking Olist payment sequence, installment, and value anomalies preserved for investigation under the staging contract."
+}
+
+SELECT
+  payments.order_id,
+  'order_missing_sequence_one' AS anomaly_type,
+  CAST(NULL AS INT64) AS payment_sequential,
+  CAST(NULL AS STRING) AS payment_type,
+  CAST(NULL AS INT64) AS payment_installments,
+  CAST(NULL AS NUMERIC) AS payment_value
+FROM ${ref("stg_payments")} AS payments
+GROUP BY payments.order_id
+HAVING COUNTIF(payments.payment_sequential = 1) = 0
+
+UNION ALL
+
+SELECT
+  order_id,
+  'zero_installment_credit_card' AS anomaly_type,
+  payment_sequential,
+  payment_type,
+  payment_installments,
+  payment_value
+FROM ${ref("stg_payments")}
+WHERE
+  payment_type = 'credit_card'
+  AND payment_installments = 0
+
+UNION ALL
+
+SELECT
+  order_id,
+  'zero_value_payment' AS anomaly_type,
+  payment_sequential,
+  payment_type,
+  payment_installments,
+  payment_value
+FROM ${ref("stg_payments")}
+WHERE
+  payment_value = 0

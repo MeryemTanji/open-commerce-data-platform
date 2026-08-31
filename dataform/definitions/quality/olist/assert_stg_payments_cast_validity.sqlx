@@ -1,0 +1,36 @@
+config {
+  type: "assertion",
+  name: "assert_stg_payments_cast_validity",
+  description: "Fails when a non-empty Olist payment value cannot be converted to its contracted semantic type."
+}
+
+SELECT
+  'payment_sequential' AS invalid_field,
+  COUNT(*) AS invalid_value_count
+FROM ${ref("payments")}
+WHERE
+  NULLIF(TRIM(payment_sequential), '') IS NOT NULL
+  AND SAFE_CAST(TRIM(payment_sequential) AS INT64) IS NULL
+HAVING COUNT(*) > 0
+
+UNION ALL
+
+SELECT
+  'payment_installments' AS invalid_field,
+  COUNT(*) AS invalid_value_count
+FROM ${ref("payments")}
+WHERE
+  NULLIF(TRIM(payment_installments), '') IS NOT NULL
+  AND SAFE_CAST(TRIM(payment_installments) AS INT64) IS NULL
+HAVING COUNT(*) > 0
+
+UNION ALL
+
+SELECT
+  'payment_value' AS invalid_field,
+  COUNT(*) AS invalid_value_count
+FROM ${ref("payments")}
+WHERE
+  NULLIF(TRIM(payment_value), '') IS NOT NULL
+  AND SAFE_CAST(TRIM(payment_value) AS NUMERIC) IS NULL
+HAVING COUNT(*) > 0
