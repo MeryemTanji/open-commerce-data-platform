@@ -3,7 +3,7 @@
 **Project:** Mercury — Open Commerce Data Platform  
 **Layer:** Analytics Engineering — Staging  
 **Source:** Olist Brazilian E-Commerce Dataset  
-**Status:** Approved for implementation  
+**Status:** Implemented and validated
 **Governing ADR:** ADR-012 — Staging Layer Standardization and Semantic Contracts
 
 ---
@@ -1588,45 +1588,45 @@ The Olist staging phase is complete only when all of the following are true.
 
 ## Standardization
 
-- [ ] all eight staging models exist;
-- [ ] every Raw source field covered by this contract is mapped intentionally;
-- [ ] semantic types match this document;
-- [ ] required renames are implemented;
-- [ ] identifier normalization is implemented;
-- [ ] categorical normalization is implemented;
-- [ ] geographic normalization is implemented;
-- [ ] free-form text handling is implemented;
-- [ ] empty-string handling is implemented.
+- [x] all eight staging models exist;
+- [x] every Raw source field covered by this contract is mapped intentionally;
+- [x] semantic types match this document;
+- [x] required renames are implemented;
+- [x] identifier normalization is implemented;
+- [x] categorical normalization is implemented;
+- [x] geographic normalization is implemented;
+- [x] free-form text handling is implemented;
+- [x] empty-string handling is implemented.
 
 ## Structural Validation
 
-- [ ] required-field contracts are tested;
-- [ ] declared source keys are tested;
-- [ ] compound-key uniqueness is tested;
-- [ ] invalid non-empty casts are detectable;
-- [ ] safe semantic domains are validated;
-- [ ] failures are observable and actionable.
+- [x] required-field contracts are tested;
+- [x] declared source keys are tested;
+- [x] compound-key uniqueness is tested;
+- [x] invalid non-empty casts are detectable;
+- [x] safe semantic domains are validated;
+- [x] failures are observable and actionable.
 
 ## Quality Surfacing
 
-- [ ] known Olist source anomalies remain present after standardization;
-- [ ] known non-blocking anomalies do not unnecessarily stop the entire pipeline;
-- [ ] anomaly reporting is separated from structural staging guarantees;
-- [ ] no suspicious source values are silently repaired.
+- [x] known Olist source anomalies remain present after standardization;
+- [x] known non-blocking anomalies do not unnecessarily stop the entire pipeline;
+- [x] anomaly reporting is separated from structural staging guarantees;
+- [x] no suspicious source values are silently repaired.
 
 ## Grain Preservation
 
-- [ ] staging row counts are reconciled with expected Raw source grain;
-- [ ] geolocation duplicates remain preserved;
-- [ ] no accidental `DISTINCT` or aggregation changes source grain.
+- [x] staging row counts are reconciled with expected Raw source grain;
+- [x] geolocation duplicates remain preserved;
+- [x] no accidental `DISTINCT` or aggregation changes source grain.
 
 ## Scope Control
 
-- [ ] no canonical joins have been introduced;
-- [ ] no foreign-key assumptions have been introduced prematurely;
-- [ ] no business metrics have been introduced;
-- [ ] no canonical customer/product/order concepts have been inferred;
-- [ ] no business-level deduplication has been introduced.
+- [x] no canonical joins have been introduced;
+- [x] no foreign-key assumptions have been introduced prematurely;
+- [x] no business metrics have been introduced;
+- [x] no canonical customer/product/order concepts have been inferred;
+- [x] no business-level deduplication has been introduced.
 
 ---
 

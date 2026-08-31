@@ -418,7 +418,9 @@ short-lived developer impersonation
 
 Validation confirmed that the identity cannot modify Raw, create arbitrary datasets, access Raw GCS, or access the BigQuery metadata control plane.
 
-The transformation infrastructure is ready for the remaining Olist staging models. Broader Terraform adoption will continue incrementally as additional infrastructure enters active implementation scope.
+The transformation infrastructure now supports the complete Olist staging and staging-quality graph. All eight staging models, their blocking assertions, and the non-blocking quality views have been executed successfully under the dedicated Dataform transformation identity.
+
+Broader Terraform adoption will continue incrementally as additional infrastructure enters active implementation scope.
 
 Detailed validation evidence is maintained in [Dataform Transformation Identity Validation](../security/dataform-transformation-identity-validation.md).
 

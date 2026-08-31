@@ -164,7 +164,7 @@ The analytics layer uses Dataform to provide:
 
 The staging layer normalises source data without silently rewriting source-quality problems. Quality issues can instead be flagged separately so valid data is not unnecessarily blocked from progressing through the platform.
 
-The first staging implementation is currently underway.
+The Olist staging layer is implemented and validated across all eight Raw source tables. Blocking assertions enforce structural contracts, while separate non-blocking quality views preserve and surface documented source anomalies.
 
 See [ADR-012](architecture/decisions/ADR-012-Staging%20Layer%20Standardization%20and%20Semantic%20Contracts.md) and the Olist staging contract under [docs/](docs/analytics/staging/) for detailed staging rules.
 
@@ -271,19 +271,13 @@ Phase 5 — Data Products
 
 Mercury is currently in **Phase 3 — Analytics Engineering**.
 
-The reusable staging standard and Olist staging contracts have been defined, Dataform has been introduced, all eight Raw sources are declared, the first staging model has been implemented, and the staging dataset has been brought under Terraform management.
+The reusable staging standard and Olist staging contracts have been implemented across all eight Raw sources. The complete Dataform graph compiles and executes successfully under the dedicated least-privilege transformation identity, and all staging assertions pass.
 
-Current work is focused on establishing the dedicated transformation security boundary before continuing staging execution and implementation.
+Current work is moving toward relationship exploration across staged entities before implementation of the canonical business model.
 
 The next major steps are:
 
 ```text
-Dedicated Dataform IAM
-        ↓
-Complete Staging Layer
-        ↓
-Staging Quality Handling
-        ↓
 Relationship Exploration
         ↓
 Canonical Business Model
@@ -304,16 +298,6 @@ Mercury keeps detailed engineering documentation outside the README so this file
 | [docs/security/](docs/security/)                   | Security audits, controls, and validation evidence |
 
 Architecture Decision Records cover the major platform boundaries, including immutable Raw storage, storage abstractions, source delivery, BigQuery loading, historical replay, recovery and provenance, security, and staging standardisation.
-
-## Current Status
-
-Mercury's ingestion and cloud Raw-platform foundation is complete for the current project scope.
-
-The platform currently provides a working path from source delivery to immutable Raw storage and BigQuery, supported by durable replay state, targeted recovery, physical provenance, reconciliation, and security controls.
-
-Analytics Engineering is now in progress using Dataform and Terraform-managed infrastructure.
-
-The immediate objective is to complete the reusable staging layer and its quality controls before designing Mercury's canonical business model and downstream data products.
 
 ## License
 

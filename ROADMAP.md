@@ -215,7 +215,7 @@ Phase 3 transforms source-faithful Raw data into standardised, tested, analytica
 
 #### 3.3 Complete Staging Layer
 
-**Status**: [wip] In progress
+**Status**: [x] Complete
 
 Implement the remaining Olist staging models according to the documented contracts.
 
@@ -226,30 +226,31 @@ Implement the remaining Olist staging models according to the documented contrac
 - [x] stg_sellers
 - [x] stg_payments
 - [x] stg_reviews
-- [ ] stg_geolocations
+- [x] stg_geolocations
 
 For each staging model:
 
-- [ ] apply documented semantic types;
-- [ ] apply documented normalisation;
-- [ ] implement blocking assertions where justified;
-- [ ] preserve source-quality anomalies where required;
-- [ ] compile and validate through Dataform;
-- [ ] validate resulting BigQuery relation.
+- [x] apply documented semantic types;
+- [x] apply documented normalisation;
+- [x] implement blocking assertions where justified;
+- [x] preserve source-quality anomalies where required;
+- [x] compile and validate through Dataform;
+- [x] validate resulting BigQuery relation.
 
 #### 3.4 Staging Quality Layer
 
-**Status**: [wip] In Progress
+**Status**: [x] Complete
 
 - [x] Implement and validate `dq_orders_lifecycle_anomalies`
 - [x] Implement and validate `dq_products_anomalies`
 - [x] Implement and validate `dq_payments_anomalies`
 - [x] Implement and validate `dq_reviews_chronology_anomalies`
-- [ ] Implement non-blocking source-quality observations
-- [ ] Surface documented Olist source anomalies
-- [ ] Separate source-quality reporting from transformation failure
-- [ ] Define quality outputs suitable for downstream monitoring
-- [ ] Validate quality behavior against profiled source findings
+- [x] Implement and validate `dq_geolocations_duplicate_observations`
+- [x] Implement non-blocking source-quality observations
+- [x] Surface documented Olist source anomalies
+- [x] Separate source-quality reporting from transformation failure
+- [x] Define quality outputs suitable for downstream monitoring
+- [x] Validate quality behavior against profiled source findings
 
 #### 3.5 Relationship Exploration
 
