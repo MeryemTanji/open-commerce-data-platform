@@ -1,0 +1,38 @@
+config {
+  type: "table",
+  schema: "staging",
+  name: "stg_sellers",
+  description: "Standardized Olist seller records following ADR-012 and the Olist staging contract.",
+  assertions: {
+    nonNull: [
+      "seller_id",
+      "seller_zip_code_prefix",
+      "seller_city",
+      "seller_state"
+    ],
+    uniqueKey: [
+      "seller_id"
+    ],
+    rowConditions: [
+      "REGEXP_CONTAINS(seller_zip_code_prefix, r'^[0-9]{5}$')",
+      "REGEXP_CONTAINS(seller_state, r'^[A-Z]{2}$')"
+    ]
+  }
+}
+
+SELECT
+  NULLIF(TRIM(seller_id), '') AS seller_id,
+
+  NULLIF(TRIM(seller_zip_code_prefix), '') AS seller_zip_code_prefix,
+
+  NULLIF(
+    LOWER(TRIM(seller_city)),
+    ''
+  ) AS seller_city,
+
+  NULLIF(
+    UPPER(TRIM(seller_state)),
+    ''
+  ) AS seller_state
+
+FROM ${ref("sellers")}
