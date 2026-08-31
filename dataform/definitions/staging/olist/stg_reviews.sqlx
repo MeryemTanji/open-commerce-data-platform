@@ -1,0 +1,56 @@
+config {
+  type: "table",
+  schema: "staging",
+  name: "stg_reviews",
+  description: "Standardized Olist review records following ADR-012 and the Olist staging contract.",
+  assertions: {
+    nonNull: [
+      "review_id",
+      "order_id",
+      "review_score",
+      "review_creation_date",
+      "review_answer_timestamp"
+    ],
+    uniqueKey: [
+      "review_id",
+      "order_id"
+    ],
+    rowConditions: [
+      "review_score BETWEEN 1 AND 5"
+    ]
+  }
+}
+
+SELECT
+  NULLIF(TRIM(review_id), '') AS review_id,
+
+  NULLIF(TRIM(order_id), '') AS order_id,
+
+  SAFE_CAST(
+    NULLIF(TRIM(review_score), '')
+    AS INT64
+  ) AS review_score,
+
+  NULLIF(
+    TRIM(review_comment_title),
+    ''
+  ) AS review_comment_title,
+
+  NULLIF(
+    TRIM(review_comment_message),
+    ''
+  ) AS review_comment_message,
+
+  DATE(
+    SAFE_CAST(
+      NULLIF(TRIM(review_creation_date), '')
+      AS TIMESTAMP
+    )
+  ) AS review_creation_date,
+
+  SAFE_CAST(
+    NULLIF(TRIM(review_answer_timestamp), '')
+    AS TIMESTAMP
+  ) AS review_answer_timestamp
+
+FROM ${ref("reviews")}

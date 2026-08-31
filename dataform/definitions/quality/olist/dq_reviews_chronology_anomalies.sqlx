@@ -1,0 +1,16 @@
+config {
+  type: "view",
+  schema: "staging",
+  name: "dq_reviews_chronology_anomalies",
+  description: "Non-blocking Olist review chronology anomalies surfaced for current and future source deliveries."
+}
+
+SELECT
+  review_id,
+  order_id,
+  'answer_before_creation_date' AS anomaly_type,
+  review_creation_date,
+  review_answer_timestamp
+FROM ${ref("stg_reviews")}
+WHERE
+  DATE(review_answer_timestamp) < review_creation_date
