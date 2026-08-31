@@ -1,0 +1,25 @@
+config {
+  type: "assertion",
+  name: "assert_stg_geolocations_cast_validity",
+  description: "Fails when a non-empty Olist geolocation coordinate cannot be converted to FLOAT64."
+}
+
+SELECT
+  'geolocation_lat' AS invalid_field,
+  COUNT(*) AS invalid_value_count
+FROM ${ref("geolocations")}
+WHERE
+  NULLIF(TRIM(geolocation_lat), '') IS NOT NULL
+  AND SAFE_CAST(TRIM(geolocation_lat) AS FLOAT64) IS NULL
+HAVING COUNT(*) > 0
+
+UNION ALL
+
+SELECT
+  'geolocation_lng' AS invalid_field,
+  COUNT(*) AS invalid_value_count
+FROM ${ref("geolocations")}
+WHERE
+  NULLIF(TRIM(geolocation_lng), '') IS NOT NULL
+  AND SAFE_CAST(TRIM(geolocation_lng) AS FLOAT64) IS NULL
+HAVING COUNT(*) > 0

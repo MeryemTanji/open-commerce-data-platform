@@ -13,6 +13,10 @@ config {
     ],
     uniqueKey: [
       "customer_id"
+    ],
+    rowConditions: [
+      "REGEXP_CONTAINS(customer_zip_code_prefix, r'^[0-9]{5}$')",
+      "REGEXP_CONTAINS(customer_state, r'^[A-Z]{2}$')"
     ]
   }
 }

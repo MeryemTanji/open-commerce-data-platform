@@ -1,0 +1,24 @@
+config {
+  type: "view",
+  schema: "staging",
+  name: "dq_geolocations_duplicate_observations",
+  description: "Non-blocking summary of duplicate normalized Olist geolocation observations preserved by the staging contract."
+}
+
+SELECT
+  'duplicate_normalized_observation' AS anomaly_type,
+  geolocation_zip_code_prefix,
+  geolocation_lat,
+  geolocation_lng,
+  geolocation_city,
+  geolocation_state,
+  COUNT(*) AS observation_count,
+  COUNT(*) - 1 AS duplicate_observation_count
+FROM ${ref("stg_geolocations")}
+GROUP BY
+  geolocation_zip_code_prefix,
+  geolocation_lat,
+  geolocation_lng,
+  geolocation_city,
+  geolocation_state
+HAVING COUNT(*) > 1

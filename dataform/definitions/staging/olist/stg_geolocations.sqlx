@@ -1,0 +1,46 @@
+config {
+  type: "table",
+  schema: "staging",
+  name: "stg_geolocations",
+  description: "Standardized Olist geolocation observations following ADR-012 and the Olist staging contract.",
+  assertions: {
+    nonNull: [
+      "geolocation_zip_code_prefix",
+      "geolocation_lat",
+      "geolocation_lng",
+      "geolocation_city",
+      "geolocation_state"
+    ],
+    rowConditions: [
+      "REGEXP_CONTAINS(geolocation_zip_code_prefix, r'^[0-9]{5}$')",
+      "REGEXP_CONTAINS(geolocation_state, r'^[A-Z]{2}$')",
+      "geolocation_lat BETWEEN -90 AND 90",
+      "geolocation_lng BETWEEN -180 AND 180"
+    ]
+  }
+}
+
+SELECT
+  NULLIF(TRIM(geolocation_zip_code_prefix), '') AS geolocation_zip_code_prefix,
+
+  SAFE_CAST(
+    NULLIF(TRIM(geolocation_lat), '')
+    AS FLOAT64
+  ) AS geolocation_lat,
+
+  SAFE_CAST(
+    NULLIF(TRIM(geolocation_lng), '')
+    AS FLOAT64
+  ) AS geolocation_lng,
+
+  NULLIF(
+    LOWER(TRIM(geolocation_city)),
+    ''
+  ) AS geolocation_city,
+
+  NULLIF(
+    UPPER(TRIM(geolocation_state)),
+    ''
+  ) AS geolocation_state
+
+FROM ${ref("geolocations")}
