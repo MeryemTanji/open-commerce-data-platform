@@ -223,7 +223,7 @@ Implement the remaining Olist staging models according to the documented contrac
 - [x] stg_orders
 - [x] stg_order_items
 - [x] stg_products
-- [ ] stg_sellers
+- [x] stg_sellers
 - [ ] stg_payments
 - [ ] stg_reviews
 - [ ] stg_geolocations
