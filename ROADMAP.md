@@ -252,9 +252,27 @@ For each staging model:
 - [x] Define quality outputs suitable for downstream monitoring
 - [x] Validate quality behavior against profiled source findings
 
-#### 3.5 Relationship Exploration
+#### 3.5 Anomaly Disposition and Monitoring Contract
 
-**Status**: [ ] Planned
+**Status**: [x] Complete
+
+Define how Mercury governs, records, communicates, and responds to blocking and non-blocking data-quality findings before publishing canonical models.
+
+- [x] Record the platform-wide anomaly-disposition and alerting policy in an ADR
+- [x] Create the Olist anomaly-disposition register
+- [x] Register all existing blocking and non-blocking controls
+- [x] Record validated anomaly baselines
+- [x] Define dispositions for known anomalies
+- [x] Define responses for controls that currently report zero anomalies
+- [x] Assign severity, ownership, thresholds, and response playbooks
+- [x] Define the historical quality-results contract
+- [x] Define baseline-aware alerting requirements
+- [x] Identify dispositions that must be implemented in canonical models
+- [x] Define the future quality-observability implementation boundary
+
+#### 3.6 Relationship Exploration
+
+**Status**: [wip] In Progress
 
 Before implementing the canonical model:
 
@@ -262,10 +280,13 @@ Before implementing the canonical model:
 - [ ] validate expected parent-child relationships
 - [ ] investigate referential-integrity gaps
 - [ ] validate cardinalities
+- [ ] measure join amplification across one-to-many relationships
+- [ ] reconcile related measures across staged entities
 - [ ] identify modelling implications of source anomalies
+- [ ] define dispositions for newly discovered relationship anomalies
 - [ ] document canonical modelling inputs and decisions
 
-#### 3.6 Canonical Business Model
+#### 3.7 Canonical Business Model
 
 **Status**: [ ] Planned
 
@@ -323,7 +344,9 @@ Phase 4 will expand infrastructure management to the broader Mercury runtime.
 #### Runtime & Scheduling
 
 - [ ] Deploy ingestion runtime to Cloud Run
-- [ ] Implement scheduled execution with Cloud Scheduler
+- [ ] Implement scheduled ingestion execution with Cloud Scheduler
+- [ ] Implement scheduled Dataform execution
+- [ ] Coordinate ingestion-to-transformation dependencies
 - [ ] Define production runtime configuration
 - [ ] Validate keyless workload authentication
 
@@ -331,9 +354,14 @@ Phase 4 will expand infrastructure management to the broader Mercury runtime.
 
 - [ ] Implement cloud logging
 - [ ] Implement operational monitoring
-- [ ] Define alerting strategy
-- [ ] Surface ingestion/replay/recovery status
-- [ ] Ensure production telemetry conforms to ADR-011
+- [ ] Persist historical data-quality evaluation results
+- [ ] Implement approved-baseline and threshold evaluation
+- [ ] Implement alerts for blocking quality failures
+- [ ] Implement alerts for non-blocking anomaly changes
+- [ ] Implement alerts for unknown quality states and failed controls
+- [ ] Surface ingestion, replay, recovery, transformation, and quality status
+- [ ] Define operational quality dashboards where required
+- [ ] Ensure production telemetry conforms to ADR-011 and ADR-013
 
 #### CI/CD
 
@@ -348,7 +376,9 @@ Phase 4 will expand infrastructure management to the broader Mercury runtime.
 
 - [ ] Create recovery runbook
 - [ ] Create manual-review runbook
+- [ ] Create data-quality response runbook
 - [ ] Define operational escalation paths
+- [ ] Define baseline and threshold approval procedures
 - [ ] Define production retention policies
 - [ ] Create developer/operations documentation where required
 

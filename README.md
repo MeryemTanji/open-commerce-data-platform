@@ -273,7 +273,11 @@ Mercury is currently in **Phase 3 — Analytics Engineering**.
 
 The reusable staging standard and Olist staging contracts have been implemented across all eight Raw sources. The complete Dataform graph compiles and executes successfully under the dedicated least-privilege transformation identity, and all staging assertions pass.
 
-Current work is moving toward relationship exploration across staged entities before implementation of the canonical business model.
+The anomaly-disposition and monitoring contract has been defined, with Olist controls, validated baselines, severities, ownership, response expectations, and downstream dispositions documented.
+
+Current work is focused on relationship exploration across staged entities. This phase will validate cardinalities, referential integrity, join amplification, reconciliation behavior, and the modelling constraints required for the canonical business model.
+
+Operational implementation of quality history, baseline evaluation, and automated alerting is planned as part of **Phase 4 — Production Platform**.
 
 The next major steps are:
 
@@ -281,6 +285,8 @@ The next major steps are:
 Relationship Exploration
         ↓
 Canonical Business Model
+        ↓
+Production Platform
 ```
 
 Detailed implementation status and upcoming work are maintained in [ROADMAP.md](ROADMAP.md).
