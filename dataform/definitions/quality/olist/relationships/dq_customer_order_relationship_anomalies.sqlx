@@ -1,0 +1,56 @@
+config {
+  type: "view",
+  schema: "staging",
+  name: "dq_customer_order_relationship_anomalies",
+  description: "Non-blocking relationship-quality observations between Olist staged customers and orders."
+}
+
+WITH orders_without_customer AS (
+  SELECT
+    COUNT(*) AS anomaly_count
+  FROM ${ref("stg_orders")} AS orders
+  LEFT JOIN ${ref("stg_customers")} AS customers
+    ON orders.customer_id = customers.customer_id
+  WHERE customers.customer_id IS NULL
+),
+
+customers_without_order AS (
+  SELECT
+    COUNT(*) AS anomaly_count
+  FROM ${ref("stg_customers")} AS customers
+  LEFT JOIN ${ref("stg_orders")} AS orders
+    ON customers.customer_id = orders.customer_id
+  WHERE orders.order_id IS NULL
+),
+
+customer_ids_with_multiple_orders AS (
+  SELECT
+    COUNT(*) AS anomaly_count
+  FROM (
+    SELECT
+      customer_id
+    FROM ${ref("stg_orders")}
+    GROUP BY
+      customer_id
+    HAVING COUNT(DISTINCT order_id) > 1
+  )
+)
+
+SELECT
+  'orders_without_customer' AS anomaly_type,
+  anomaly_count
+FROM orders_without_customer
+
+UNION ALL
+
+SELECT
+  'customers_without_order' AS anomaly_type,
+  anomaly_count
+FROM customers_without_order
+
+UNION ALL
+
+SELECT
+  'customer_ids_with_multiple_orders' AS anomaly_type,
+  anomaly_count
+FROM customer_ids_with_multiple_orders
