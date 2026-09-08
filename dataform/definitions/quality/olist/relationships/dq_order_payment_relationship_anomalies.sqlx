@@ -1,0 +1,101 @@
+config {
+  type: "view",
+  schema: "staging",
+  name: "dq_order_payment_relationship_anomalies",
+  description: "Non-blocking relationship-quality observations between Olist staged orders and payments."
+}
+
+WITH payment_order_ids AS (
+  SELECT DISTINCT
+    order_id
+  FROM ${ref("stg_payments")}
+),
+
+order_relationships AS (
+  SELECT
+    orders.order_id,
+    orders.order_status,
+    payment_order_ids.order_id AS payment_order_id
+  FROM ${ref("stg_orders")} AS orders
+  LEFT JOIN payment_order_ids
+    ON orders.order_id = payment_order_ids.order_id
+),
+
+payments_without_order AS (
+  SELECT
+    COUNT(*) AS anomaly_count
+  FROM ${ref("stg_payments")} AS payments
+  LEFT JOIN ${ref("stg_orders")} AS orders
+    ON payments.order_id = orders.order_id
+  WHERE orders.order_id IS NULL
+),
+
+relationship_metrics AS (
+  SELECT
+    COUNTIF(
+      order_status = 'approved'
+      AND payment_order_id IS NULL
+    ) AS approved_orders_without_payments,
+
+    COUNTIF(
+      order_status = 'invoiced'
+      AND payment_order_id IS NULL
+    ) AS invoiced_orders_without_payments,
+
+    COUNTIF(
+      order_status = 'processing'
+      AND payment_order_id IS NULL
+    ) AS processing_orders_without_payments,
+
+    COUNTIF(
+      order_status = 'shipped'
+      AND payment_order_id IS NULL
+    ) AS shipped_orders_without_payments,
+
+    COUNTIF(
+      order_status = 'delivered'
+      AND payment_order_id IS NULL
+    ) AS delivered_orders_without_payments
+
+  FROM order_relationships
+)
+
+SELECT
+  'payments_without_order' AS anomaly_type,
+  anomaly_count
+FROM payments_without_order
+
+UNION ALL
+
+SELECT
+  'approved_orders_without_payments',
+  approved_orders_without_payments
+FROM relationship_metrics
+
+UNION ALL
+
+SELECT
+  'invoiced_orders_without_payments',
+  invoiced_orders_without_payments
+FROM relationship_metrics
+
+UNION ALL
+
+SELECT
+  'processing_orders_without_payments',
+  processing_orders_without_payments
+FROM relationship_metrics
+
+UNION ALL
+
+SELECT
+  'shipped_orders_without_payments',
+  shipped_orders_without_payments
+FROM relationship_metrics
+
+UNION ALL
+
+SELECT
+  'delivered_orders_without_payments',
+  delivered_orders_without_payments
+FROM relationship_metrics

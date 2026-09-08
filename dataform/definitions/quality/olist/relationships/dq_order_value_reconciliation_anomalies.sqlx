@@ -1,0 +1,130 @@
+config {
+  type: "view",
+  schema: "staging",
+  name: "dq_order_value_reconciliation_anomalies",
+  description: "Non-blocking reconciliation observations comparing Olist order-item totals with payment totals at order grain."
+}
+
+WITH item_totals AS (
+  SELECT
+    order_id,
+    SUM(price + freight_value) AS item_based_order_total
+  FROM ${ref("stg_order_items")}
+  GROUP BY
+    order_id
+),
+
+payment_totals AS (
+  SELECT
+    order_id,
+    SUM(payment_value) AS payment_total
+  FROM ${ref("stg_payments")}
+  GROUP BY
+    order_id
+),
+
+reconciliation AS (
+  SELECT
+    item_totals.order_id,
+    payment_totals.payment_total
+      - item_totals.item_based_order_total AS difference
+  FROM item_totals
+  INNER JOIN payment_totals
+    ON item_totals.order_id = payment_totals.order_id
+),
+
+metrics AS (
+  SELECT
+    COUNT(*) AS evaluated_order_count,
+
+    COUNTIF(difference > 0.01)
+      AS payment_above_item_total_count,
+
+    COUNTIF(difference < -0.01)
+      AS payment_below_item_total_count,
+
+    ROUND(
+      SUM(
+        CASE
+          WHEN difference > 0.01
+          THEN ABS(difference)
+          ELSE 0
+        END
+      ),
+      2
+    ) AS payment_above_total_absolute_difference,
+
+    ROUND(
+      SUM(
+        CASE
+          WHEN difference < -0.01
+          THEN ABS(difference)
+          ELSE 0
+        END
+      ),
+      2
+    ) AS payment_below_total_absolute_difference,
+
+    ROUND(
+      MAX(
+        CASE
+          WHEN difference > 0.01
+          THEN ABS(difference)
+        END
+      ),
+      2
+    ) AS payment_above_maximum_absolute_difference,
+
+    ROUND(
+      MAX(
+        CASE
+          WHEN difference < -0.01
+          THEN ABS(difference)
+        END
+      ),
+      2
+    ) AS payment_below_maximum_absolute_difference
+
+  FROM reconciliation
+)
+
+SELECT
+  'payment_above_item_total' AS anomaly_type,
+  evaluated_order_count,
+  payment_above_item_total_count AS anomaly_count,
+
+  ROUND(
+    SAFE_DIVIDE(
+      payment_above_item_total_count,
+      evaluated_order_count
+    ) * 100,
+    4
+  ) AS anomaly_percentage,
+
+  payment_above_total_absolute_difference
+    AS total_absolute_difference,
+
+  payment_above_maximum_absolute_difference
+    AS maximum_absolute_difference
+
+FROM metrics
+
+UNION ALL
+
+SELECT
+  'payment_below_item_total',
+  evaluated_order_count,
+  payment_below_item_total_count,
+
+  ROUND(
+    SAFE_DIVIDE(
+      payment_below_item_total_count,
+      evaluated_order_count
+    ) * 100,
+    4
+  ),
+
+  payment_below_total_absolute_difference,
+  payment_below_maximum_absolute_difference
+
+FROM metrics
