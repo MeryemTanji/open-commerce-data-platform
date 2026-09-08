@@ -802,6 +802,79 @@ Mercury must aggregate order items and payments independently to `order_id` grai
 
 ---
 
+### 6.10 Order–review relationship anomalies
+
+#### Scope
+
+The order–review relationship is monitored by:
+
+```text
+staging.dq_order_review_relationship_anomalies
+```
+
+The view detects relationship-coverage, review-cardinality, identity-consistency, and cross-purchase-date conditions without modifying the staged source observations.
+
+Detailed exploration evidence and canonical modelling implications are maintained in the Olist relationship profile.
+
+### Registered Controls
+
+| Control ID | Anomaly or observation type | Baseline | Severity | Disposition |
+| --- | --- | ---: | --- | --- |
+| `OLIST-ORDER-REVIEW-COVERAGE-001` | `reviews_without_order` | 0 | Warning | Preserve the staged review; exclude it from order-dependent canonical outputs and investigate the missing parent |
+| `OLIST-ORDER-REVIEW-COVERAGE-002` | `delivered_orders_without_review` | 646 | Informational | Retain the order and flag missing feedback; exclude it only from measures requiring an observed review |
+| `OLIST-ORDER-REVIEW-CARDINALITY-001` | `orders_with_multiple_distinct_review_scores` | 202 | Informational | Retain every distinct review event and its chronology; require downstream models to declare their review-selection semantics |
+| `OLIST-ORDER-REVIEW-IDENTITY-001` | `reused_review_ids_with_inconsistent_payloads` | 0 | Warning | Preserve and flag affected observations; prevent unreviewed consolidation to one review entity |
+| `OLIST-ORDER-REVIEW-IDENTITY-002` | `reused_review_ids_across_customers` | 0 | Warning | Preserve and flag affected observations; prevent unreviewed use in customer-level feedback outputs |
+| `OLIST-ORDER-REVIEW-IDENTITY-003` | `reused_review_ids_across_purchase_dates` | 41 | Warning | Preserve all associations and flag cross-occasion review reuse for controlled downstream treatment |
+
+### Baseline Interpretation
+
+The zero-anomaly controls establish structural expectations:
+
+- every review should reference a known order;
+- one reused review_id should continue to represent one consistent review payload;
+- a reused review_id should not cross persistent-customer boundaries.
+
+Any non-zero result for these controls represents a change from the validated source baseline and requires investigation.
+
+The non-zero baselines describe known source behavior:
+
+- 646 delivered orders currently have no associated review;
+- 202 orders currently contain multiple distinct review scores;
+- 41 reused review IDs currently span different purchase dates.
+
+These conditions do not invalidate the staged orders or reviews.
+
+Multiple review scores may represent customer feedback changing over time. They MUST NOT be automatically averaged, overwritten, or treated as contradictory without a downstream semantic rule.
+
+### Initial Notification Behavior
+
+| Control ID | Initial notification condition | Initial response |
+| --- | --- | --- |
+| `OLIST-ORDER-REVIEW-COVERAGE-001` | Anomaly count becomes greater than zero | Investigate missing order coverage before publishing affected order-dependent review outputs |
+| `OLIST-ORDER-REVIEW-COVERAGE-002` | Count or rate materially exceeds the validated baseline | Confirm whether review coverage or source-delivery behavior has changed |
+| `OLIST-ORDER-REVIEW-CARDINALITY-001` | Count or rate materially deviates from the validated baseline | Review whether feedback-event behavior or source semantics have changed |
+| `OLIST-ORDER-REVIEW-IDENTITY-001` | Anomaly count becomes greater than zero | Investigate payload conflicts and prevent automatic consolidation of affected review IDs |
+| `OLIST-ORDER-REVIEW-IDENTITY-002` | Anomaly count becomes greater than zero | Investigate the identity boundary before using affected reviews in customer-level outputs |
+| `OLIST-ORDER-REVIEW-IDENTITY-003` | Count or rate materially exceeds the validated baseline | Investigate increased review reuse across separate purchase occasions |
+
+Exact automated thresholds and notification routing remain part of the future quality-observability implementation boundary defined by ADR-013.
+
+### Canonical publication requirements
+
+Before canonical review outputs are published:
+
+- reviews MUST be represented independently from their order associations;
+- the review entity SHOULD use one row per review_id;
+- an order–review bridge SHOULD preserve one row per (order_id, review_id);
+- review IDs with inconsistent payloads MUST NOT be consolidated without review;
+- cross-customer review reuse MUST NOT enter customer-level outputs without investigation;
+- order-level review measures MUST aggregate or resolve reviews before joining to the order grain;
+- first-review, latest-review, all-review, and sentiment-evolution measures MUST use explicitly documented semantics;
+- reviewless orders MUST remain available to analyses that do not require customer feedback.
+
+---
+
 ## 7. Accepted Profiled Characteristics
 
 Some observed values satisfy the staging contract and are not currently classified as anomalies.

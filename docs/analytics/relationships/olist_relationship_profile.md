@@ -238,7 +238,7 @@ The current source snapshot supports the following conclusions:
 
 ---
 
-### 3.6 Canonical modelling implications
+### 3.7 Canonical modelling implications
 
 The findings provide the following inputs for later canonical design:
 
@@ -254,7 +254,7 @@ These are modelling inputs, not yet an approved canonical schema.
 
 ---
 
-### 3.7 Remaining customer exploration
+### 3.8 Remaining customer exploration
 
 Before finalizing the canonical customer design, Mercury must investigate whether multiple customer records associated with the same `customer_unique_id` contain different:
 
@@ -266,8 +266,6 @@ Before finalizing the canonical customer design, Mercury must investigate whethe
 This will determine whether customer location can be treated as a single stable attribute or requires order-contextual or historically varying treatment.
 
 ---
-
-## 4. Order–Order Item Relationship
 
 ## 4. Order–Order Item Relationship
 
@@ -567,7 +565,7 @@ The severities, alert conditions, response requirements, and dispositions are ma
 
 ---
 
-### 5.5 Order-value reconciliation and join amplification
+### 5.6 Order-value reconciliation and join amplification
 
 Order-item values and payment values were aggregated independently to order grain before comparison. This avoids multiplying measures when an order contains both multiple items and multiple payment records.
 
@@ -656,7 +654,216 @@ The current source snapshot supports the following conclusions:
 
 ## 6. Order–Review Relationship
 
-**Status:** Planned
+### 6.1 Relationship definition
+
+The order–review relationship connects:
+
+- `stg_orders.order_id`
+- `stg_reviews.order_id`
+
+The staged data does not represent a strictly one-to-one relationship.
+
+The validated relationship supports:
+
+- orders without reviews;
+- orders with one review;
+- orders with multiple distinct reviews;
+- review identifiers associated with multiple orders.
+
+The effective source relationship is therefore many-to-many:
+
+```text
+Order
+  ↓
+Order–Review Association
+  ↓
+Review Event
+```
+The staging layer preserves each source observation at the compound grain:
+
+        (order_id, review_id)
+
+No review observation is removed, merged, or reassigned during staging.
+
+---
+
+### 6.2 Coverage and cardinality results
+
+| Metric                                              | Result |
+| --------------------------------------------------- | -----: |
+| Order rows                                          | 99,441 |
+| Distinct order IDs                                  | 99,441 |
+| Review rows                                         | 99,224 |
+| Reviewed orders                                     | 98,673 |
+| Distinct review IDs                                 | 98,410 |
+| Orders without reviews                              |    768 |
+| Reviews without orders                              |      0 |
+| Orders with exactly one review                      | 98,126 |
+| Orders with multiple reviews                        |    547 |
+| Minimum reviews per reviewed order                  |      1 |
+| Maximum reviews per reviewed order                  |      3 |
+| Average reviews per reviewed order                  | 1.0056 |
+| Orders repeating the same review ID internally      |      0 |
+| Rows produced by a direct order-to-review left join | 99,992 |
+| Left-join amplification factor                      | 1.0055 |
+
+All review rows reference valid staged orders.
+
+The direct order-to-review join produces 551 more rows than the order table. Order-grain models therefore MUST resolve or aggregate review relationships before joining them to orders.
+
+Of the 547 orders with multiple reviews:
+
+- 543 have two review rows;
+- 4 have three review rows.
+
+---
+
+### 6.3 Review coverage by order status
+
+| Order status | Orders | Orders without reviews | Orders with multiple reviews | Missing-review rate |
+| --- | ---: | ---: | ---: | ---: |
+| `delivered` | 96,478 | 646 | 525 | 0.6696% |
+| `shipped` | 1,107 | 75 | 11 | 6.7751% |
+| `canceled` | 625 | 20 | 4 | 3.2000% |
+| `unavailable` | 609 | 14 | 2 | 2.2989% |
+| `processing` | 301 | 6 | 1 | 1.9934% |
+| `invoiced` | 314 | 5 | 4 | 1.5924% |
+| `created` | 5 | 2 | 0 | 40.0000% |
+| `approved` | 2 | 0 | 0 | 0.0000% |
+
+The 646 delivered orders without reviews represent incomplete feedback coverage rather than invalid orders.
+
+These orders remain valid for order, fulfilment, and revenue analysis. They MUST be excluded only from calculations that require an observed review score or review event.
+
+Review-based reporting MUST distinguish between:
+
+- order population;
+- review-eligible population where explicitly defined;
+- reviewed-order population;
+- unique feedback-event population.
+
+---
+
+### 6.4 Multiple-review behavior
+
+Multiple reviews associated with one order are not assumed to be duplicate or contradictory records.
+
+| Reviews per order | Affected orders | Different scores | Different creation dates | Different answer timestamps | Different titles | Different messages |
+| ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 2 | 543 | 200 | 388 | 543 | 9 | 124 |
+| 3 | 4 | 2 | 4 | 4 | 0 | 2 |
+| **Total** | **547** | **202** | **392** | **547** | **9** | **126** |
+
+All orders with multiple reviews contain different answer timestamps. Some customers may provide feedback more than once, including changing their score after using a product or experiencing the order over time.
+
+Consequently:
+
+- multiple scores MUST NOT be treated automatically as contradictory data;
+- earlier reviews MUST NOT be silently overwritten;
+- later reviews MUST NOT automatically replace earlier reviews in staging;
+- review chronology MUST remain available for downstream analysis;
+- downstream models MUST define whether they use the first review, - latest review, every feedback event, or another documented aggregation.
+
+A simple average of multiple scores MUST NOT be applied as an undocumented default because it removes the direction and chronology of changing feedback.
+
+---
+
+### 6.5 Reused review identities
+
+The review identifier is not unique to one order.
+
+| Metric                                       | Result |
+| -------------------------------------------- | -----: |
+| Review IDs associated with multiple orders   |    789 |
+| Affected review rows                         |  1,603 |
+| Maximum orders per reused review ID          |      3 |
+| Reused IDs with inconsistent payloads        |      0 |
+| Reused IDs spanning different customers      |      0 |
+| Reused IDs spanning different purchase dates |     41 |
+
+Every reused review ID currently:
+
+- has an identical score, title, message, creation date, and answer timestamp;
+- remains within one customer_unique_id;
+- is associated with no more than three orders.
+
+The purchase-timing profile is:
+
+| Orders per reused review ID | Reused review IDs | Purchased within one hour | Purchased on different dates | Maximum purchase span |
+| ---: | ---: | ---: | ---: | ---: |
+| 2 | 764 | 729 | 35 | 3,051 hours |
+| 3 | 25 | 19 | 6 | 1,304 hours |
+| **Total** | **789** | **748** | **41** | — |
+
+Approximately 94.80% of reused review IDs relate to orders purchased within one hour. This strongly suggests that one customer-feedback event can be associated with multiple order IDs from the same purchase occasion.
+
+The remaining 41 review IDs span different purchase dates. These records may represent source-side review reuse or propagation across separate purchase occasions. Mercury preserves and flags them rather than silently assigning the review to only one order.
+
+---
+
+### 6.6 Relationship-quality controls
+
+The permanent Dataform view:
+
+        staging.dq_order_review_relationship_anomalies
+
+reports the following controls:
+
+| Anomaly or observation type | Validated baseline | Severity | Disposition |
+| --- | ---: | --- | --- |
+| `reviews_without_order` | 0 | Warning | Preserve the staged observation; exclude it from order-dependent canonical outputs and investigate the missing parent |
+| `delivered_orders_without_review` | 646 | Informational | Retain the order and flag missing feedback; exclude it only from measures requiring an observed review |
+| `orders_with_multiple_distinct_review_scores` | 202 | Informational | Retain every distinct review event and its chronology; require downstream models to declare their review-selection semantics |
+| `reused_review_ids_with_inconsistent_payloads` | 0 | Warning | Preserve and flag affected observations; prevent unreviewed consolidation to one review entity |
+| `reused_review_ids_across_customers` | 0 | Warning | Preserve and flag affected observations; prevent unreviewed use in customer-level feedback outputs |
+| `reused_review_ids_across_purchase_dates` | 41 | Warning | Preserve all order associations and flag cross-occasion review reuse for controlled downstream treatment |
+
+The controls remain non-blocking at staging grain. They provide baselines and future-change detection under ADR-013.
+
+---
+
+### 6.7 Canonical modelling implications
+
+The canonical model SHOULD separate review events from their order associations.
+
+| Canonical relation | Grain | Purpose |
+| --- | --- | --- |
+| Review fact or entity | One row per `review_id` | Stores the unique review payload and feedback chronology |
+| Order–review bridge | One row per `(order_id, review_id)` | Preserves the association between reviews and orders |
+| Order fact | One row per `order_id` | Preserves the order grain without review-driven row amplification |
+
+The one-row-per-review representation is currently supported because reused review IDs have consistent payloads. The zero-baseline payload-consistency control protects this assumption against future source changes.
+
+Canonical calculations MUST define their intended grain:
+
+- feedback-event metrics count each review_id once;
+- order review coverage uses the order–review bridge;
+- order-level review counts count distinct review IDs;
+- customer-level feedback metrics avoid counting a shared review - repeatedly merely because it relates to multiple orders;
+- initial-sentiment metrics select the earliest qualifying review deterministically;
+- latest-sentiment metrics select the latest qualifying review deterministically;
+- sentiment-evolution analysis retains and orders all distinct review events.
+
+Order-grain models MUST aggregate or resolve review associations before joining them to orders.
+
+The staging source observations remain immutable with respect to review identity and assignment. Any consolidation, selection, or temporal interpretation belongs in an explicitly documented downstream model.
+
+---
+
+### 6.8 Findings
+
+The relationship exploration establishes that:
+
+- 1. Every staged review references a valid order.
+- 2. Review coverage is optional rather than universal.
+- 3. Delivered orders without reviews remain analytically valid outside review-dependent measures.
+- 4. An order may receive multiple distinct review events.
+- 5. Multiple review scores may represent changing customer feedback over time.
+- 6. A review event may relate to multiple orders belonging to the same persistent customer.
+- 7. Most shared reviews relate to orders purchased within one hour.
+- 8. A smaller set of shared reviews spans separate purchase dates and requires continued visibility.
+- 9. Direct order-to-review joins can amplify the order grain.
+- 10. The canonical model requires a review entity and an order–review bridge to preserve the observed relationship losslessly.
 
 ---
 
@@ -705,7 +912,7 @@ Relationship exploration is complete when:
 - [x] customer–order relationships are fully profiled
 - [x] order–order-item relationships are profiled
 - [x] order–payment relationships are profiled
-- [ ] order–review relationships are profiled
+- [x] order–review relationships are profiled
 - [ ] product–order-item relationships are profiled
 - [ ] seller–order-item relationships are profiled
 - [ ] geographic relationships are profiled
