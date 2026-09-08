@@ -1,0 +1,135 @@
+config {
+  type: "view",
+  schema: "staging",
+  name: "dq_order_order_item_relationship_anomalies",
+  description: "Non-blocking relationship-quality observations between Olist staged orders and order items."
+}
+
+WITH order_item_profiles AS (
+  SELECT
+    order_id,
+    COUNT(*) AS item_count,
+    COUNT(DISTINCT order_item_id) AS distinct_item_id_count,
+    MIN(order_item_id) AS minimum_item_id,
+    MAX(order_item_id) AS maximum_item_id
+  FROM ${ref("stg_order_items")}
+  GROUP BY
+    order_id
+),
+
+order_relationships AS (
+  SELECT
+    orders.order_id,
+    orders.order_status,
+    order_item_profiles.item_count
+  FROM ${ref("stg_orders")} AS orders
+  LEFT JOIN order_item_profiles
+    ON orders.order_id = order_item_profiles.order_id
+),
+
+items_without_order AS (
+  SELECT
+    COUNT(*) AS anomaly_count
+  FROM ${ref("stg_order_items")} AS order_items
+  LEFT JOIN ${ref("stg_orders")} AS orders
+    ON order_items.order_id = orders.order_id
+  WHERE orders.order_id IS NULL
+),
+
+relationship_metrics AS (
+  SELECT
+    COUNTIF(
+      order_status = 'approved'
+      AND item_count IS NULL
+    ) AS approved_orders_without_items,
+
+    COUNTIF(
+      order_status = 'invoiced'
+      AND item_count IS NULL
+    ) AS invoiced_orders_without_items,
+
+    COUNTIF(
+      order_status = 'processing'
+      AND item_count IS NULL
+    ) AS processing_orders_without_items,
+
+    COUNTIF(
+      order_status = 'shipped'
+      AND item_count IS NULL
+    ) AS shipped_orders_without_items,
+
+    COUNTIF(
+      order_status = 'delivered'
+      AND item_count IS NULL
+    ) AS delivered_orders_without_items
+
+  FROM order_relationships
+),
+
+sequence_metrics AS (
+  SELECT
+    COUNTIF(
+      minimum_item_id != 1
+    ) AS orders_missing_item_id_one,
+
+    COUNTIF(
+      minimum_item_id != 1
+      OR maximum_item_id != distinct_item_id_count
+    ) AS orders_with_non_contiguous_item_ids
+
+  FROM order_item_profiles
+)
+
+SELECT
+  'items_without_order' AS anomaly_type,
+  anomaly_count
+FROM items_without_order
+
+UNION ALL
+
+SELECT
+  'approved_orders_without_items',
+  approved_orders_without_items
+FROM relationship_metrics
+
+UNION ALL
+
+SELECT
+  'invoiced_orders_without_items',
+  invoiced_orders_without_items
+FROM relationship_metrics
+
+UNION ALL
+
+SELECT
+  'processing_orders_without_items',
+  processing_orders_without_items
+FROM relationship_metrics
+
+UNION ALL
+
+SELECT
+  'shipped_orders_without_items',
+  shipped_orders_without_items
+FROM relationship_metrics
+
+UNION ALL
+
+SELECT
+  'delivered_orders_without_items',
+  delivered_orders_without_items
+FROM relationship_metrics
+
+UNION ALL
+
+SELECT
+  'orders_missing_item_id_one',
+  orders_missing_item_id_one
+FROM sequence_metrics
+
+UNION ALL
+
+SELECT
+  'orders_with_non_contiguous_item_ids',
+  orders_with_non_contiguous_item_ids
+FROM sequence_metrics
