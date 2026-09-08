@@ -491,6 +491,57 @@ Mercury must not apply `SELECT DISTINCT` to staging merely to remove the duplica
 
 ---
 
+### 6.6 Customer–order relationship anomalies
+
+Source relations:
+
+```text
+staging.stg_customers
+staging.stg_orders
+```
+
+Quality view:
+
+   staging.dq_customer_order_relationship_anomalies
+
+| Control ID | Anomaly type | Baseline | Severity | Disposition |
+|---|---|---:|---|---|
+| `OLIST-CUSTOMER-ORDER-COVERAGE-001` | `orders_without_customer` | 0 | Warning | Preserve and flag the staged order; prevent unreviewed use in customer-dependent canonical outputs. |
+| `OLIST-CUSTOMER-ORDER-COVERAGE-002` | `customers_without_order` | 0 | Warning | Preserve and flag the customer record; exclude it only from analyses requiring an associated order. |
+| `OLIST-CUSTOMER-ORDER-CARDINALITY-001` | `customer_ids_with_multiple_orders` | 0 | Warning | Preserve and flag affected records; investigate whether source identity semantics have changed. |
+
+#### Analytics Impact
+
+The current zero baselines confirm that:
+
+- every staged order matches one staged customer record;
+- every staged customer record matches one staged order;
+- each customer_id is associated with exactly one order;
+- joining customers and orders through customer_id preserves order grain.
+
+The separate customer_unique_id represents persistent customer identity and may legitimately relate to multiple orders.
+
+#### Alert Condition
+
+Any positive result must trigger notification because all three approved baselines are zero.
+
+Failure of the quality view to execute must produce an unknown quality state rather than a zero-anomaly result.
+
+Response
+
+The engineer must:
+
+- 1. inspect the affected customer and order records;
+- 2. compare the relationship keys with their Raw representations;
+- 3. determine whether the condition results from source behavior, incomplete ingestion, or transformation logic;
+- 4. identify customer-dependent canonical outputs that may be affected;
+- 5. apply the documented disposition without deleting or silently rewriting staging records;
+- 6. review the Olist identity contract if customer_id semantics have changed.
+
+Mercury must not silently create customer relationships, replace identifiers, or discard unmatched records.
+
+---
+
 ## 7. Accepted Profiled Characteristics
 
 Some observed values satisfy the staging contract and are not currently classified as anomalies.
@@ -567,7 +618,7 @@ Ownership refers to an operational role rather than an individual person.
 | Stable control identifiers | Defined in this document |
 | Canonical quality flags | Planned |
 | Geographic resolution model | Planned |
-| Relationship-quality controls | Planned for Phase 3.6 |
+| Relationship-quality controls | In progress — customer–order control implemented and validated |
 | Persistent quality-result history | Planned |
 | Baseline evaluation mechanism | Planned |
 | Automated engineer notification | Planned |
