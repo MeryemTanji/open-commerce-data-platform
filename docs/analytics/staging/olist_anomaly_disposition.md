@@ -542,6 +542,85 @@ Mercury must not silently create customer relationships, replace identifiers, or
 
 ---
 
+### 6.7 Order–order-item relationship anomalies
+
+Source relations:
+
+```text
+staging.stg_orders
+staging.stg_order_items
+```
+
+Quality view:
+
+```text
+staging.dq_order_order_item_relationship_anomalies
+```
+
+| Control ID | Anomaly type | Baseline | Severity | Disposition |
+|---|---|---:|---|---|
+| `OLIST-ORDER-ITEM-COVERAGE-001` | `items_without_order` | 0 | Warning | Preserve and flag the item; prevent unreviewed use in order-dependent canonical outputs. |
+| `OLIST-ORDER-ITEM-COVERAGE-002` | `approved_orders_without_items` | 0 | Warning | Preserve and flag the order; exclude it from item-dependent outputs until investigated. |
+| `OLIST-ORDER-ITEM-COVERAGE-003` | `invoiced_orders_without_items` | 2 | Warning | Preserve and flag the order; retain order-level evidence but prevent item-dependent reconciliation. |
+| `OLIST-ORDER-ITEM-COVERAGE-004` | `processing_orders_without_items` | 0 | Warning | Preserve and flag the order; exclude it from item-dependent outputs until investigated. |
+| `OLIST-ORDER-ITEM-COVERAGE-005` | `shipped_orders_without_items` | 1 | Warning | Preserve and flag the order; retain fulfilment evidence but prevent item-dependent reconciliation. |
+| `OLIST-ORDER-ITEM-COVERAGE-006` | `delivered_orders_without_items` | 0 | Warning | Preserve and flag the order; exclude it from item-dependent outputs until investigated. |
+| `OLIST-ORDER-ITEM-SEQUENCE-001` | `orders_missing_item_id_one` | 0 | Warning | Preserve and flag affected items; do not renumber the source sequence. |
+| `OLIST-ORDER-ITEM-SEQUENCE-002` | `orders_with_non_contiguous_item_ids` | 0 | Warning | Preserve and flag affected items; do not invent missing sequence values. |
+
+#### Analytical impact
+
+The current relationship profile confirms that:
+
+- every staged order item matches a staged order;
+- order-item identifiers begin at one and remain contiguous within each order;
+- orders may legitimately contain multiple items;
+- joining orders to order items changes the result from order grain to order-item grain;
+- `created`, `canceled`, and `unavailable` orders may legitimately have no item records;
+- two invoiced orders and one shipped order have no Raw or staged item records despite having approved positive payments and reviews;
+- the shipped itemless order also contains a carrier-delivery timestamp.
+
+Orders without expected item records cannot support:
+
+- product attribution;
+- seller attribution;
+- item-price calculation;
+- freight calculation;
+- item-count calculation;
+- reconciliation between payment value and item-level order value.
+
+They may remain usable for order-level lifecycle, payment, customer, and review analysis when the missing item relationship is explicitly flagged.
+
+#### Alert condition
+
+Notify when:
+
+- `items_without_order` becomes positive;
+- any currently zero active-status control becomes positive;
+- the invoiced or shipped baseline increases;
+- a new active order status appears without items;
+- an item sequence no longer begins at one;
+- an item sequence becomes non-contiguous;
+- the quality view fails to execute.
+
+Unchanged itemless `created`, `canceled`, and `unavailable` orders do not require an actionable alert solely because they lack items.
+
+#### Response
+
+The engineer must:
+
+1. inspect the affected orders and items in staging and Raw;
+2. determine whether the cause is missing source data, incomplete ingestion, or transformation behavior;
+3. inspect related payments, lifecycle timestamps, and reviews;
+4. identify item-, product-, seller-, price-, and freight-dependent outputs;
+5. preserve the order and all available related evidence;
+6. prevent unreviewed item-dependent use until the condition is understood;
+7. avoid fabricating products, sellers, prices, freight values, or item sequences.
+
+Mercury must not delete itemless orders or infer missing line items from payment totals.
+
+---
+
 ## 7. Accepted Profiled Characteristics
 
 Some observed values satisfy the staging contract and are not currently classified as anomalies.
@@ -618,7 +697,7 @@ Ownership refers to an operational role rather than an individual person.
 | Stable control identifiers | Defined in this document |
 | Canonical quality flags | Planned |
 | Geographic resolution model | Planned |
-| Relationship-quality controls | In progress — customer–order control implemented and validated |
+| Relationship-quality controls | In progress — customer–order and order–order-item controls implemented and validated |
 | Persistent quality-result history | Planned |
 | Baseline evaluation mechanism | Planned |
 | Automated engineer notification | Planned |

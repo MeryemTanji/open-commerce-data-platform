@@ -269,7 +269,156 @@ This will determine whether customer location can be treated as a single stable 
 
 ## 4. Order–Order Item Relationship
 
-**Status:** Planned
+## 4. Order–Order Item Relationship
+
+### 4.1 Relationship definition
+
+The relationship between staged orders and order items uses:
+
+```text
+stg_orders.order_id
+        =
+stg_order_items.order_id
+```
+
+The declared grains are:
+
+```text
+stg_orders
+one row per order
+
+stg_order_items
+one row per order and order-item sequence
+```
+
+The expected relationship is one order to zero or more order items.
+
+---
+
+### 4.2 Coverage and cardinality results
+
+| Metric | Result |
+|---|---:|
+| Order rows | 99,441 |
+| Order-item rows | 112,650 |
+| Orders with items | 98,666 |
+| Orders without items | 775 |
+| Order items without an order | 0 |
+| Orders with exactly one item | 88,863 |
+| Orders with multiple items | 9,803 |
+| Minimum items per item-bearing order | 1 |
+| Maximum items per order | 21 |
+| Average items per item-bearing order | 1.1417 |
+| Orders missing item ID one | 0 |
+| Orders with non-contiguous item IDs | 0 |
+| Inner-join rows | 112,650 |
+| Left-join rows | 113,425 |
+| Left-join amplification factor | 1.1406 |
+
+Approximately 9.94% of item-bearing orders contain multiple items.
+
+A direct left join from orders to order items increases the result from 99,441 order rows to 113,425 rows. Measures held at order grain would therefore be duplicated if joined directly without aggregation or grain-aware modelling.
+
+---
+
+### 4.3 Itemless orders by status
+
+| Order status | Total orders in status | Orders without items | Percentage of status without items |
+|---|---:|---:|---:|
+| `unavailable` | 609 | 603 | 99.0148% |
+| `canceled` | 625 | 164 | 26.2400% |
+| `created` | 5 | 5 | 100.0000% |
+| `invoiced` | 314 | 2 | 0.6369% |
+| `shipped` | 1,107 | 1 | 0.0903% |
+
+Itemless orders with the following statuses are treated as status-consistent source characteristics:
+
+- `created`;
+- `canceled`;
+- `unavailable`.
+
+These statuses represent 772 of the 775 itemless orders.
+
+The remaining three itemless orders require explicit quality treatment:
+
+- 2 invoiced orders;
+- 1 shipped order.
+
+No approved, processing, or delivered orders are currently missing items.
+
+---
+
+### 4.4 Unexpected itemless-order evidence
+
+The two invoiced orders and one shipped order:
+
+- were purchased on 5 October 2016;
+- have no corresponding rows in Raw order items;
+- have no corresponding rows in staged order items;
+- each have one approved positive payment;
+- each have one review with score one.
+
+Their payment values are:
+
+| Order status | Payment value |
+|---|---:|
+| `invoiced` | 73.04 |
+| `invoiced` | 76.19 |
+| `shipped` | 77.73 |
+
+The shipped order also has an order-delivered-carrier timestamp.
+
+Other orders from the same source period contain valid item records, including delivered, invoiced, processing, and shipped orders. The finding therefore does not represent a complete order-item source outage for that date.
+
+The evidence supports classification as a localized source-level relationship anomaly. It does not establish why the line items are absent.
+
+Mercury must not infer missing products, sellers, prices, freight values, or item sequences from the payment records.
+
+---
+
+### 4.5 Relationship-quality controls
+
+The following non-blocking controls are implemented in:
+
+```text
+staging.dq_order_order_item_relationship_anomalies
+```
+
+| Control ID | Anomaly type | Validated baseline |
+|---|---|---:|
+| `OLIST-ORDER-ITEM-COVERAGE-001` | `items_without_order` | 0 |
+| `OLIST-ORDER-ITEM-COVERAGE-002` | `approved_orders_without_items` | 0 |
+| `OLIST-ORDER-ITEM-COVERAGE-003` | `invoiced_orders_without_items` | 2 |
+| `OLIST-ORDER-ITEM-COVERAGE-004` | `processing_orders_without_items` | 0 |
+| `OLIST-ORDER-ITEM-COVERAGE-005` | `shipped_orders_without_items` | 1 |
+| `OLIST-ORDER-ITEM-COVERAGE-006` | `delivered_orders_without_items` | 0 |
+| `OLIST-ORDER-ITEM-SEQUENCE-001` | `orders_missing_item_id_one` | 0 |
+| `OLIST-ORDER-ITEM-SEQUENCE-002` | `orders_with_non_contiguous_item_ids` | 0 |
+
+The view:
+
+- compiles successfully through Dataform;
+- passes its BigQuery dry run;
+- is deployed in the staging dataset;
+- reproduces the validated exploratory baselines.
+
+Severities, alert conditions, response requirements, and dispositions are maintained in the Olist anomaly disposition register.
+
+---
+
+### 4.6 Canonical modelling implications
+
+The relationship establishes that:
+
+1. order items form a child entity at order-item grain;
+2. order-item measures must not be joined directly into an order-grain model without aggregation;
+3. a canonical order fact and canonical order-item fact may require separate grains;
+4. product and seller attribution is unavailable for the three unexpected itemless orders;
+5. item-price and freight totals cannot be calculated for those orders;
+6. payment-to-item-value reconciliation cannot succeed for those orders;
+7. order-level lifecycle, customer, payment, and review evidence may still be retained with an explicit missing-items flag;
+8. `order_item_id` behaves as a contiguous sequence within each order and must not be treated as globally unique;
+9. itemless `created`, `canceled`, and `unavailable` orders must not be removed merely because they lack item records.
 
 ---
 
@@ -327,8 +476,8 @@ Directly joining multiple child relations at their source grains may multiply me
 
 Relationship exploration is complete when:
 
-- [ ] customer–order relationships are fully profiled
-- [ ] order–order-item relationships are profiled
+- [x] customer–order relationships are fully profiled
+- [x] order–order-item relationships are profiled
 - [ ] order–payment relationships are profiled
 - [ ] order–review relationships are profiled
 - [ ] product–order-item relationships are profiled
