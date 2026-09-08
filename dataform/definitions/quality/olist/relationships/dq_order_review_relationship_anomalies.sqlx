@@ -1,0 +1,135 @@
+config {
+  type: "view",
+  schema: "staging",
+  name: "dq_order_review_relationship_anomalies",
+  description: "Non-blocking observations of order and review relationship coverage, cardinality, identity consistency, and temporal behavior."
+}
+
+WITH order_profiles AS (
+  SELECT
+    o.order_id,
+    o.order_status,
+    COUNT(DISTINCT r.review_id) AS review_count,
+    COUNT(DISTINCT r.review_score) AS distinct_review_score_count
+  FROM ${ref("stg_orders")} AS o
+  LEFT JOIN ${ref("stg_reviews")} AS r
+    USING (order_id)
+  GROUP BY
+    o.order_id,
+    o.order_status
+),
+
+review_id_profiles AS (
+  SELECT
+    r.review_id,
+    COUNT(DISTINCT r.order_id) AS order_count,
+    COUNT(DISTINCT c.customer_unique_id) AS unique_customer_count,
+    COUNT(DISTINCT DATE(o.order_purchase_timestamp))
+      AS distinct_purchase_date_count,
+    COUNT(
+      DISTINCT TO_JSON_STRING(
+        STRUCT(
+          r.review_score,
+          r.review_comment_title,
+          r.review_comment_message,
+          r.review_creation_date,
+          r.review_answer_timestamp
+        )
+      )
+    ) AS distinct_payload_count
+  FROM ${ref("stg_reviews")} AS r
+  JOIN ${ref("stg_orders")} AS o
+    USING (order_id)
+  JOIN ${ref("stg_customers")} AS c
+    USING (customer_id)
+  GROUP BY r.review_id
+),
+
+review_metrics AS (
+  SELECT
+    (
+      SELECT COUNT(*)
+      FROM ${ref("stg_reviews")} AS r
+      LEFT JOIN ${ref("stg_orders")} AS o
+        USING (order_id)
+      WHERE o.order_id IS NULL
+    ) AS reviews_without_order,
+
+    (
+      SELECT COUNT(*)
+      FROM order_profiles
+      WHERE
+        order_status = "delivered"
+        AND review_count = 0
+    ) AS delivered_orders_without_review,
+
+    (
+      SELECT COUNT(*)
+      FROM order_profiles
+      WHERE distinct_review_score_count > 1
+    ) AS orders_with_multiple_distinct_review_scores,
+
+    (
+      SELECT COUNT(*)
+      FROM review_id_profiles
+      WHERE
+        order_count > 1
+        AND distinct_payload_count > 1
+    ) AS reused_review_ids_with_inconsistent_payloads,
+
+    (
+      SELECT COUNT(*)
+      FROM review_id_profiles
+      WHERE
+        order_count > 1
+        AND unique_customer_count > 1
+    ) AS reused_review_ids_across_customers,
+
+    (
+      SELECT COUNT(*)
+      FROM review_id_profiles
+      WHERE
+        order_count > 1
+        AND distinct_purchase_date_count > 1
+    ) AS reused_review_ids_across_purchase_dates
+)
+
+SELECT
+  "reviews_without_order" AS anomaly_type,
+  reviews_without_order AS anomaly_count
+FROM review_metrics
+
+UNION ALL
+
+SELECT
+  "delivered_orders_without_review" AS anomaly_type,
+  delivered_orders_without_review AS anomaly_count
+FROM review_metrics
+
+UNION ALL
+
+SELECT
+  "orders_with_multiple_distinct_review_scores" AS anomaly_type,
+  orders_with_multiple_distinct_review_scores AS anomaly_count
+FROM review_metrics
+
+UNION ALL
+
+SELECT
+  "reused_review_ids_with_inconsistent_payloads" AS anomaly_type,
+  reused_review_ids_with_inconsistent_payloads AS anomaly_count
+FROM review_metrics
+
+UNION ALL
+
+SELECT
+  "reused_review_ids_across_customers" AS anomaly_type,
+  reused_review_ids_across_customers AS anomaly_count
+FROM review_metrics
+
+UNION ALL
+
+SELECT
+  "reused_review_ids_across_purchase_dates" AS anomaly_type,
+  reused_review_ids_across_purchase_dates AS anomaly_count
+FROM review_metrics
