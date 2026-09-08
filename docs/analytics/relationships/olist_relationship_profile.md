@@ -424,7 +424,233 @@ The relationship establishes that:
 
 ## 5. Order–Payment Relationship
 
-**Status:** Planned
+### 5.1 Relationship definition
+
+The relationship between staged orders and payments uses:
+
+```text
+stg_orders.order_id
+        =
+stg_payments.order_id
+```
+
+The declared grains are:
+
+```text
+stg_orders
+one row per order
+
+stg_payments
+one row per order and payment sequence
+```
+
+The expected relationship is one order to zero or more payment records.
+
+Multiple payment records may represent split payments, multiple vouchers, or other source payment behavior. They are not inherently anomalous.
+
+---
+
+### 5.2 Coverage and cardinality results
+
+| Metric | Result |
+|---|---:|
+| Order rows | 99,441 |
+| Payment rows | 103,886 |
+| Orders with payments | 99,440 |
+| Orders without payments | 1 |
+| Payments without an order | 0 |
+| Orders with exactly one payment | 96,479 |
+| Orders with multiple payments | 2,961 |
+| Minimum payments per payment-bearing order | 1 |
+| Maximum payments per order | 29 |
+| Average payments per payment-bearing order | 1.0447 |
+| Orders missing payment sequence one | 80 |
+| Orders with non-contiguous payment sequences | 80 |
+| Inner-join rows | 103,886 |
+| Left-join rows | 103,887 |
+| Left-join amplification factor | 1.0447 |
+
+Approximately 2.98% of payment-bearing orders contain multiple payment records.
+
+A direct order-to-payment join therefore changes the relation from order grain to payment grain and duplicates order-level attributes for multi-payment orders.
+
+---
+
+### 5.3 Payment sequence behavior
+
+The 80 orders without payment sequence one have the following observed patterns:
+
+| Sequence pattern | Affected orders |
+|---|---:|
+| `2` | 78 |
+| `2,3` | 2 |
+
+All affected orders begin at sequence two:
+
+- 78 orders contain only payment sequence two;
+- 2 orders contain sequences two and three;
+- no affected order contains sequence one.
+
+Mercury cannot determine from the available data whether sequence-one payments are missing or whether the source assigned sequences according to another process.
+
+The sequence values must therefore remain unchanged. Mercury must not renumber them.
+
+This condition is already monitored through:
+
+```text
+staging.dq_payments_anomalies
+```
+
+with the anomaly type:
+
+```text
+order_missing_sequence_one
+```
+
+It is not duplicated in the order–payment relationship-quality view.
+
+---
+
+### 5.4 Paymentless delivered order
+
+One delivered order has no corresponding payment record in either Raw or staging.
+
+The available evidence is:
+
+| Attribute | Result |
+|---|---:|
+| Order status | `delivered` |
+| Raw payment rows | 0 |
+| Staged payment rows | 0 |
+| Order-item rows | 3 |
+| Total item price | 134.97 |
+| Total freight value | 8.49 |
+| Item-based order total | 143.46 |
+| Review rows | 1 |
+| Review score | 1 |
+| Carrier-delivery timestamp | Present |
+| Customer-delivery timestamp | Present |
+
+The order is valid evidence for order, item, product, seller, fulfilment, customer, and review analysis.
+
+It is not valid evidence for collected-payment value or payment-method analysis.
+
+Mercury must not infer that payment value equals 143.46. Item-based order value and collected payment value are separate source concepts and may differ for legitimate reasons.
+
+---
+
+### 5.5 Relationship-quality controls
+
+The following controls are implemented in:
+
+```text
+staging.dq_order_payment_relationship_anomalies
+```
+
+| Control ID | Anomaly type | Validated baseline |
+|---|---|---:|
+| `OLIST-ORDER-PAYMENT-COVERAGE-001` | `payments_without_order` | 0 |
+| `OLIST-ORDER-PAYMENT-COVERAGE-002` | `approved_orders_without_payments` | 0 |
+| `OLIST-ORDER-PAYMENT-COVERAGE-003` | `invoiced_orders_without_payments` | 0 |
+| `OLIST-ORDER-PAYMENT-COVERAGE-004` | `processing_orders_without_payments` | 0 |
+| `OLIST-ORDER-PAYMENT-COVERAGE-005` | `shipped_orders_without_payments` | 0 |
+| `OLIST-ORDER-PAYMENT-COVERAGE-006` | `delivered_orders_without_payments` | 1 |
+
+The view:
+
+- compiles successfully through Dataform;
+- passes its BigQuery dry run;
+- is deployed in the staging dataset;
+- reproduces the validated relationship baselines.
+
+The severities, alert conditions, response requirements, and dispositions are maintained in the Olist anomaly disposition register.
+
+---
+
+### 5.5 Order-value reconciliation and join amplification
+
+Order-item values and payment values were aggregated independently to order grain before comparison. This avoids multiplying measures when an order contains both multiple items and multiple payment records.
+
+#### Coverage and reconciliation results
+
+| Metric | Result |
+| --- | ---: |
+| Orders | 99,441 |
+| Orders with both items and payments | 98,665 |
+| Orders with items but no payments | 1 |
+| Orders with payments but no items | 775 |
+| Orders with neither items nor payments | 0 |
+| Orders with multiple items and multiple payments | 275 |
+| Orders reconciled within the `0.01` tolerance | 98,362 |
+| Orders with payments above item totals | 264 |
+| Orders with payments below item totals | 39 |
+| Orders outside the reconciliation tolerance | 303 |
+| Reconciliation anomaly rate | 0.3071% |
+
+The implemented reconciliation controls evaluate only orders containing both item and payment records. Missing relationship coverage remains governed by the separate order–item and order–payment controls.
+
+#### Reconciliation differences outside tolerance
+
+| Direction | Evaluated orders | Anomaly count | Anomaly rate | Total absolute difference | Maximum absolute difference |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Payment above item total | 98,665 | 264 | 0.2676% | 3,070.14 | 182.81 |
+| Payment below item total | 98,665 | 39 | 0.0395% | 199.08 | 51.62 |
+| Combined | 98,665 | 303 | 0.3071% | 3,269.22 | 182.81 |
+
+The exploratory total absolute difference across all comparable orders was `3,271.95`. That value includes small differences within the accepted `0.01` tolerance. The monitored anomaly total of `3,269.22` includes only orders outside that tolerance.
+
+#### Difference magnitude
+
+| Absolute-difference band | Payment above | Payment below | Total orders | Total absolute difference |
+| --- | ---: | ---: | ---: | ---: |
+| `0.02–0.10` | 23 | 21 | 44 | 1.00 |
+| `0.11–1.00` | 9 | 1 | 10 | 5.89 |
+| `1.01–10.00` | 141 | 10 | 151 | 755.17 |
+| `10.01–50.00` | 84 | 6 | 90 | 1,788.80 |
+| `50.01–100.00` | 4 | 1 | 5 | 304.65 |
+| Above `100.00` | 3 | 0 | 3 | 413.71 |
+
+Most reconciliation anomalies are greater than `1.00`, so the findings cannot be explained solely by ordinary decimal-rounding differences.
+
+#### Payment-structure findings
+
+| Payment structure | Comparable orders | Mismatched orders | Mismatch rate | Total absolute difference |
+| --- | ---: | ---: | ---: | ---: |
+| Multiple payments, missing sequence one | 2 | 0 | 0.0000% | 0.00 |
+| Multiple payments, sequence one present | 2,934 | 17 | 0.5794% | 47.61 |
+| Single payment, missing sequence one | 77 | 0 | 0.0000% | 0.00 |
+| Single payment, sequence one present | 95,652 | 286 | 0.2990% | 3,221.61 |
+
+The missing-sequence-one condition does not explain the reconciliation anomalies. Most mismatches occur among orders with a conventional single payment at sequence one.
+
+#### Join-amplification findings
+
+| Metric | Correctly aggregated result | Naive three-table join result | Overstatement |
+| --- | ---: | ---: | ---: |
+| Joined rows | 99,441 order-grain rows | 118,434 rows | 18,993 additional rows |
+| Item value | 15,843,553.24 | 16,566,687.31 | 723,134.07 |
+| Payment value | 16,008,872.12 | 20,470,726.66 | 4,461,854.54 |
+
+The naive join produces a row-amplification factor of approximately `1.191`. It overstates item value by approximately `4.564%` and payment value by approximately `27.871%`.
+
+Canonical models therefore MUST aggregate order items and payments independently to order grain before joining them. Order-grain outputs should expose the item-based total, payment total, difference, and reconciliation status without silently correcting either source-derived measure.
+
+---
+
+### 5.7 Findings
+
+The current source snapshot supports the following conclusions:
+
+1. Every staged payment has a matching staged order.
+2. Nearly every staged order has at least one payment.
+3. One delivered order has no Raw or staged payment evidence.
+4. Multiple payment records are legitimate and occur for approximately 2.98% of payment-bearing orders.
+5. Payment data must be aggregated to order grain before joining it to an order-grain canonical model.
+6. Payment sequence values cannot be assumed to begin at one.
+7. Payment sequence values must not be renumbered.
+8. Payment value must not be inferred from item price and freight.
+9. Directly joining payments and order items through orders may multiply both item and payment measures.
+10. Item-to-payment reconciliation must be profiled before canonical monetary measures are defined.
 
 ---
 
@@ -478,7 +704,7 @@ Relationship exploration is complete when:
 
 - [x] customer–order relationships are fully profiled
 - [x] order–order-item relationships are profiled
-- [ ] order–payment relationships are profiled
+- [x] order–payment relationships are profiled
 - [ ] order–review relationships are profiled
 - [ ] product–order-item relationships are profiled
 - [ ] seller–order-item relationships are profiled

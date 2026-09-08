@@ -621,6 +621,187 @@ Mercury must not delete itemless orders or infer missing line items from payment
 
 ---
 
+### 6.8 Order–payment relationship anomalies
+
+Source relations:
+
+```text
+staging.stg_orders
+staging.stg_payments
+```
+
+Quality view:
+
+```text
+staging.dq_order_payment_relationship_anomalies
+```
+
+| Control ID | Anomaly type | Baseline | Severity | Disposition |
+|---|---|---:|---|---|
+| `OLIST-ORDER-PAYMENT-COVERAGE-001` | `payments_without_order` | 0 | Warning | Preserve and flag the payment; prevent unreviewed use in order-dependent canonical outputs. |
+| `OLIST-ORDER-PAYMENT-COVERAGE-002` | `approved_orders_without_payments` | 0 | Warning | Preserve and flag the order; exclude it from payment-dependent outputs until investigated. |
+| `OLIST-ORDER-PAYMENT-COVERAGE-003` | `invoiced_orders_without_payments` | 0 | Warning | Preserve and flag the order; prevent unreviewed payment and collected-value interpretation. |
+| `OLIST-ORDER-PAYMENT-COVERAGE-004` | `processing_orders_without_payments` | 0 | Warning | Preserve and flag the order; exclude it from payment-dependent outputs until investigated. |
+| `OLIST-ORDER-PAYMENT-COVERAGE-005` | `shipped_orders_without_payments` | 0 | Warning | Preserve and flag the order; retain fulfilment evidence but prevent payment reconciliation. |
+| `OLIST-ORDER-PAYMENT-COVERAGE-006` | `delivered_orders_without_payments` | 1 | Warning | Preserve and flag the order; retain order and fulfilment evidence but prevent payment-dependent reconciliation. |
+
+#### Analytical impact
+
+The current relationship profile confirms that:
+
+- every staged payment matches a staged order;
+- one delivered order has no Raw or staged payment record;
+- the paymentless order contains three items;
+- its item price totals 134.97;
+- its freight value totals 8.49;
+- it has complete carrier and customer delivery timestamps;
+- it has one review with score one;
+- some orders legitimately contain multiple payment records.
+
+The paymentless delivered order may remain usable for:
+
+- order counts;
+- customer-order relationships;
+- order-item analysis;
+- product and seller analysis;
+- fulfilment analysis;
+- review analysis.
+
+It cannot support:
+
+- collected-payment analysis;
+- payment-method analysis;
+- payment reconciliation;
+- comparisons between payment value and item-based order value.
+
+Payment-sequence anomalies remain governed by `dq_payments_anomalies` and are not duplicated in this relationship view.
+
+#### Alert condition
+
+Notify when:
+
+- `payments_without_order` becomes positive;
+- any currently zero active-status control becomes positive;
+- the delivered-order-without-payment baseline increases;
+- a new active order status appears without payment;
+- the quality view fails to execute.
+
+Paymentless `created`, `canceled`, and `unavailable` orders are not automatically actionable solely because they lack payment records.
+
+#### Response
+
+The engineer must:
+
+1. inspect the affected order and payment relations in staging and Raw;
+2. determine whether the condition reflects missing source data, incomplete ingestion, or transformation behavior;
+3. inspect related items, lifecycle timestamps, and reviews;
+4. identify payment-, revenue-, and reconciliation-dependent outputs;
+5. preserve the order and all available related evidence;
+6. prevent unreviewed payment-dependent use;
+7. avoid fabricating payment records, payment methods, sequences, or values.
+
+Mercury must not infer a payment value from item and freight totals.
+
+---
+
+### 6.9 Order-value reconciliation anomalies
+
+Source relations:
+
+```text
+staging.stg_order_items
+staging.stg_payments
+```
+
+Quality view:
+
+```text
+staging.dq_order_value_reconciliation_anomalies
+```
+
+The control compares independently aggregated item-based and payment totals at `order_id` grain.
+
+The item-based order total is:
+
+```text
+SUM(price + freight_value)
+```
+
+The payment total is:
+
+```text
+SUM(payment_value)
+```
+
+A tolerance of 0.01 is applied before a difference is classified as an anomaly.
+
+| Control ID | Anomaly type | Baseline | Severity | Disposition |
+|---|---|---:|---|---|
+| `OLIST-ORDER-VALUE-RECONCILIATION-001` | `payment_above_item_total` | 264 | Warning | Preserve both totals and flag the order; exclude it from analyses requiring exact item-to-payment reconciliation. |
+| `OLIST-ORDER-VALUE-RECONCILIATION-002` | `payment_below_item_total` | 39 | Warning | Preserve both totals and flag the order; exclude it from analyses requiring exact item-to-payment reconciliation. |
+
+#### Validated monetary impact
+
+| Anomaly type | Evaluated orders | Anomaly rate | Total absolute difference | Maximum absolute difference |
+|---|---:|---:|---:|---:|
+| `payment_above_item_total` | 98,665 | 0.2676% | 3,070.14 | 182.81 |
+| `payment_below_item_total` | 98,665 | 0.0395% | 199.08 | 51.62 |
+| Combined | 98,665 | 0.3071% | 3,269.22 | 182.81 |
+
+The cumulative absolute difference across all comparable orders is 3,271.95 when differences within the accepted 0.01 tolerance are included. The monitored anomaly impact of 3,269.22 includes only orders outside that tolerance.
+
+#### Analytical impact
+
+Reconciliation anomalies affect:
+
+- comparisons between collected payment and item-based order value;
+- payment completeness analysis;
+- order-value validation;
+- revenue definitions requiring exact agreement between the two concepts.
+
+Affected orders may remain valid for analyses that use one clearly identified measure independently.
+
+Mercury must preserve the distinction between:
+
+```text
+item-based order value
+```
+
+and:
+
+```text
+collected payment value
+```
+
+Neither value may be overwritten to force agreement.
+
+#### Alert condition
+
+Notify when:
+
+- either anomaly count or anomaly rate exceeds its approved baseline;
+- the total or maximum absolute difference increases materially;
+- a new reconciliation direction or category appears;
+- the quality view fails to execute.
+
+An unchanged approved baseline does not require repeated actionable notification.
+
+#### Response
+
+The engineer must:
+
+1. inspect the independently aggregated item and payment records;
+2. identify the payment method and payment structure;
+3. determine whether the difference reflects source behavior, missing data, or transformation logic;
+4. identify reconciliation-dependent downstream outputs;
+5. preserve both original measures;
+6. apply the documented reconciliation status;
+7. avoid altering source values to manufacture agreement.
+
+Mercury must aggregate order items and payments independently to `order_id` grain before comparing or combining them.
+
+---
+
 ## 7. Accepted Profiled Characteristics
 
 Some observed values satisfy the staging contract and are not currently classified as anomalies.
@@ -697,7 +878,7 @@ Ownership refers to an operational role rather than an individual person.
 | Stable control identifiers | Defined in this document |
 | Canonical quality flags | Planned |
 | Geographic resolution model | Planned |
-| Relationship-quality controls | In progress — customer–order and order–order-item controls implemented and validated |
+| Relationship-quality controls | In progress — customer–order, order–order-item, order–payment, and order-value reconciliation controls implemented and validated |
 | Persistent quality-result history | Planned |
 | Baseline evaluation mechanism | Planned |
 | Automated engineer notification | Planned |
