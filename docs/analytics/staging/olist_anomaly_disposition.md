@@ -502,7 +502,9 @@ staging.stg_orders
 
 Quality view:
 
-   staging.dq_customer_order_relationship_anomalies
+```text
+staging.dq_customer_order_relationship_anomalies
+```
 
 | Control ID | Anomaly type | Baseline | Severity | Disposition |
 |---|---|---:|---|---|
@@ -814,7 +816,7 @@ staging.dq_order_review_relationship_anomalies
 
 The view detects relationship-coverage, review-cardinality, identity-consistency, and cross-purchase-date conditions without modifying the staged source observations.
 
-Detailed exploration evidence and canonical modelling implications are maintained in the Olist relationship profile.
+Detailed exploration evidence and canonical modelling implications are maintained in the [Olist relationship profile](../relationships/olist_relationship_profile.md).
 
 ### Registered Controls
 
@@ -858,7 +860,7 @@ Multiple review scores may represent customer feedback changing over time. They 
 | `OLIST-ORDER-REVIEW-IDENTITY-002` | Anomaly count becomes greater than zero | Investigate the identity boundary before using affected reviews in customer-level outputs |
 | `OLIST-ORDER-REVIEW-IDENTITY-003` | Count or rate materially exceeds the validated baseline | Investigate increased review reuse across separate purchase occasions |
 
-Exact automated thresholds and notification routing remain part of the future quality-observability implementation boundary defined by ADR-013.
+Exact automated thresholds and notification routing remain part of the future quality-observability implementation boundary defined by [ADR-013](../../../architecture/decisions/ADR-013-Data%20Quality%20Anomaly%20Disposition%20and%20Monitoring%20Contract.md).
 
 ### Canonical publication requirements
 
@@ -887,7 +889,7 @@ staging.dq_product_order_item_relationship_anomalies
 
 The view detects broken product references and monitors whether repeated products within an order continue to share consistent commercial and fulfilment attributes.
 
-Detailed profiling evidence and canonical modelling implications are maintained in the Olist relationship profile.
+Detailed profiling evidence and canonical modelling implications are maintained in the [Olist relationship profile](../relationships/olist_relationship_profile.md).
 
 #### Registered Controls
 
@@ -925,7 +927,7 @@ The four grain-consistency controls protect this interpretation. A future non-ze
 | `OLIST-PRODUCT-ITEM-GRAIN-003` | Count becomes greater than zero | Preserve freight-level separation and review the downstream quantity grouping |
 | `OLIST-PRODUCT-ITEM-GRAIN-004` | Count becomes greater than zero | Preserve shipping-limit separation and review the downstream quantity grouping |
 
-Exact automated thresholds and notification routing remain part of the future quality-observability implementation boundary defined by ADR-013.
+Exact automated thresholds and notification routing remain part of the future quality-observability implementation boundary defined by [ADR-013](../../../architecture/decisions/ADR-013-Data%20Quality%20Anomaly%20Disposition%20and%20Monitoring%20Contract.md).
 
 #### Canonical Publication Requirements
 
@@ -954,7 +956,7 @@ staging.dq_seller_order_item_relationship_anomalies
 
 The view detects missing seller references and monitors the marketplace cardinalities between orders, products, and sellers.
 
-Detailed profiling evidence and canonical modelling implications are maintained in the Olist relationship profile.
+Detailed profiling evidence and canonical modelling implications are maintained in the [Olist relationship profile](../relationships/olist_relationship_profile.md).
 
 #### Registered Controls
 
@@ -994,7 +996,7 @@ The zero baseline for order_product_combinations_with_multiple_sellers supports 
 | `OLIST-SELLER-PRODUCT-CARDINALITY-001` | Count or rate materially deviates from the validated baseline | Confirm whether product availability across sellers has materially changed |
 | `OLIST-SELLER-ITEM-GRAIN-001` | Count becomes greater than zero | Preserve seller-level item separation and review product-quantity aggregation rules |
 
-Exact automated thresholds and notification routing remain part of the future quality-observability implementation boundary defined by ADR-013.
+Exact automated thresholds and notification routing remain part of the future quality-observability implementation boundary defined by [ADR-013](../../../architecture/decisions/ADR-013-Data%20Quality%20Anomaly%20Disposition%20and%20Monitoring%20Contract.md).
 
 #### Canonical Publication Requirements
 
@@ -1010,6 +1012,102 @@ Before seller-dependent canonical outputs are published:
 - seller-level order measures MUST aggregate to (order_id, seller_id) before joining to order grain;
 - quantity derivation MUST remain seller-aware when one order-product combination contains multiple sellers;
 - sellers without order items MUST remain valid marketplace records.
+
+---
+
+### 6.13 Geographic relationship anomalies
+
+#### Scope
+
+Customer, seller, and geolocation relationships are monitored by:
+
+```text
+staging.dq_geographic_relationship_anomalies
+```
+
+The view detects incomplete ZIP-reference coverage, disagreement with the deterministically selected modal state, multi-state geolocation prefixes, and unused geographic reference coverage.
+
+Detailed profiling evidence and canonical modelling implication are maintained in the [Olist relationship profile](../relationships/olist_relationship_profile.md).
+
+#### Registered controls
+
+| Control ID | Anomaly or observation type | Baseline | Severity | Disposition |
+| --- | --- | ---: | --- | --- |
+| `OLIST-GEO-CUSTOMER-COVERAGE-001` | `customers_without_geolocation_prefix` | 278 | Warning | Retain the customer and source address; flag missing reference coverage and leave resolved coordinates unavailable |
+| `OLIST-GEO-CUSTOMER-COVERAGE-002` | `customer_prefixes_without_geolocation` | 157 | Informational | Monitor the distinct missing customer ZIP prefixes and investigate material baseline changes |
+| `OLIST-GEO-SELLER-COVERAGE-001` | `sellers_without_geolocation_prefix` | 7 | Warning | Retain the seller and source address; flag missing reference coverage and leave resolved coordinates unavailable |
+| `OLIST-GEO-SELLER-COVERAGE-002` | `seller_prefixes_without_geolocation` | 7 | Informational | Monitor the distinct missing seller ZIP prefixes and investigate material baseline changes |
+| `OLIST-GEO-CUSTOMER-STATE-001` | `customers_disagreeing_with_modal_geolocation_state` | 0 | Warning | Preserve both values and prevent unreviewed geographic correction if customer-state consistency changes |
+| `OLIST-GEO-SELLER-STATE-001` | `sellers_disagreeing_with_modal_geolocation_state` | 35 | Warning | Preserve the source state, expose the resolved state and mismatch flag, and use the resolved state only through documented downstream logic |
+| `OLIST-GEO-REFERENCE-STATE-002` | `geolocation_prefixes_with_modal_state_ties` | 0 | Warning | Preserve all observations, apply the approved deterministic tie-breaker, and flag the ambiguous resolution for investigation |
+| `OLIST-GEO-REFERENCE-STATE-001` | `geolocation_prefixes_with_multiple_states` | 8 | Warning | Preserve every observation and resolve state downstream using the documented deterministic modal-state rule |
+| `OLIST-GEO-REFERENCE-USAGE-001` | `geolocation_prefixes_without_customer_or_seller` | 4,099 | Informational | Retain unused geographic reference coverage without treating it as invalid |
+
+
+#### Baseline Interpretation
+
+The non-zero customer and seller coverage baselines describe incomplete reference coverage:
+
+- 278 customer records across 157 ZIP prefixes lack geolocation observation;
+- 7 seller records across 7 ZIP prefixes lack geolocation observations.
+
+These entities remain valid for analyses that do not require resolved coordinates.
+
+The zero customer-state disagreement baseline establishes that the modal geolocation state currently agrees with every covered customer record.
+
+The 35 seller-state disagreements are known source-address inconsistencies. The seller source state is preserved, while downstream geographic models may use a resolved ZIP-based state with an explicit mismatch flag.
+
+The eight multi-state prefixes each contain one isolated conflicting state observations and one clearly dominant state. These observations remain preserved in staging.
+
+No geolocation prefix currently has multiple states tied for the highest observation count. Any future non-zero result represents new resolution ambiguity and requires investigation before the affected resolved geography is used without review.
+
+The 4,099 unused geolocation prefixes are valid reference records and MUST NOT be quarantined or removed merely because they are not currently referenced by cutomers or sellers.
+
+#### Initial Notification Behaviour
+
+| Control ID | Initial notification condition | Initial response |
+| --- | --- | --- |
+| `OLIST-GEO-CUSTOMER-COVERAGE-001` | Count or rate materially exceeds the validated baseline | Investigate whether customer ZIP-reference coverage or source delivery has deteriorated |
+| `OLIST-GEO-CUSTOMER-COVERAGE-002` | Count materially exceeds the validated baseline | Identify newly uncovered customer ZIP prefixes and assess geographic impact |
+| `OLIST-GEO-SELLER-COVERAGE-001` | Count or rate materially exceeds the validated baseline | Investigate whether seller ZIP-reference coverage or source delivery has deteriorated |
+| `OLIST-GEO-SELLER-COVERAGE-002` | Count materially exceeds the validated baseline | Identify newly uncovered seller ZIP prefixes and assess geographic impact |
+| `OLIST-GEO-CUSTOMER-STATE-001` | Anomaly count becomes greater than zero | Investigate the customer source and modal-state resolution before applying geographic correction |
+| `OLIST-GEO-SELLER-STATE-001` | Count or rate materially deviates from the validated baseline | Investigate changes in seller-address consistency and retain source-versus-resolved lineage |
+| `OLIST-GEO-REFERENCE-STATE-001` | Count materially exceeds the validated baseline or a resolution tie appears | Investigate geographic-reference ambiguity before refreshing resolved geography |
+| `OLIST-GEO-REFERENCE-USAGE-001` | Count materially deviates from the validated baseline | Confirm whether customer, seller, or geolocation reference coverage has changed |
+| `OLIST-GEO-REFERENCE-STATE-002` | Anomaly count becomes greater than zero | Investigate the tied state evidence and review the resolved geography before dependent publication |
+
+Exact automated thresholds and notification routing remain part of the future quality-observability implementation boundary defined by [ADR-013](../../../architecture/decisions/ADR-013-Data%20Quality%20Anomaly%20Disposition%20and%20Monitoring%20Contract.md)
+
+```text
+Deterministically correct downstream
+```
+
+This means:
+
+- stg_sellers.seller_state remains unchanged;
+- the resolved geographic reference supplies a separate resolved state;
+- the seller dimension preserves both the source and resolved values;
+- a mismatch flag makes the correction visible;
+- geographic analysis may use the resolved state;
+- source-lineage and investigation remain possible.
+
+This rule does not authorise silent staging correction.
+
+#### Canonical Publication Requirements
+
+Before geographic canonical outputs are published:
+
+- geolocation observations MUST be resolved to one row per ZIP-code prefix;
+- customer and seller models MUST NOT join directly to stg_geolocations;
+- the modal-state selection rule MUST be deterministic;
+- state-resolution ties MUST be surfaced for investigation;
+- representative city and coordinate methods MUST be explicitly documented and validated;
+- source and resolved geographic attributes MUST remain distinguishable;
+- missing geographic coverage MUST NOT remove otherwise valid customers or sellers;
+- resolved coordinates MUST remain unavailable where no governed geographic reference exists;
+- seller-state corrections MUST retain the source value and expose a mismatch flag;
+- unused geographic reference records MUST remain valid.
 
 ---
 
@@ -1038,16 +1136,17 @@ A future business model may expose a zero-freight indicator where analytically u
 Until sufficient historical evaluations exist to establish more mature statistical thresholds, Mercury will use the following initial policy:
 
 | Condition | Initial behavior |
-|---|---|
+| --- | --- |
 | Blocking control reports any failing row | Fail dependent publication and issue a critical notification |
 | Blocking control fails to execute | Fail dependent publication and issue a critical unknown-state notification |
 | Zero-baseline non-blocking control becomes positive | Issue a warning notification |
-| Known warning-level anomaly exceeds its approved count or rate | Issue a warning notification |
-| Known informational anomaly remains unchanged | Record without repeated actionable notification |
-| Known informational anomaly rate increases | Notify for engineering evaluation |
+| Known warning-level anomaly materially deviates from its approved count, rate, or threshold | Issue a warning notification and require engineering evaluation |
+| Known informational anomaly remains within its approved baseline or tolerance | Record without repeated actionable notification |
+| Known informational anomaly materially deviates from its approved count, rate, or tolerance | Notify for engineering evaluation |
+| A deterministic resolution becomes tied or ambiguous | Record the ambiguity, apply only an approved deterministic tie-breaker, and issue a warning notification |
 | New anomaly type appears | Notify for classification and disposition |
 | Non-blocking monitor fails to execute | Record an unknown quality state and notify |
-| Anomaly returns to its expected state | Record the recovery; resolution notification may be emitted |
+| Anomaly returns to its expected state | Record the recovery; a resolution notification may be emitted |
 
 Unexpected results must not automatically become new approved baselines.
 

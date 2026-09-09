@@ -1260,7 +1260,230 @@ The relationship exploration establishes that:
 
 ## 9. Geographic Relationships
 
-**Status:** Planned
+### 9.1 Relationship definition
+
+Geographic relationships connect:
+
+- `stg_customers.customer_zip_code_prefix`
+- `stg_sellers.seller_zip_code_prefix`
+- `stg_geolocations.geolocation_zip_code_prefix`
+
+The geolocation relation contains repeated observations and is not unique by ZIP-code prefix.
+
+The source relationship is therefore:
+
+```text
+Customer >──── ZIP Prefix ────< Geolocation Observation
+Seller   >──── ZIP Prefix ────< Geolocation Observation
+```
+
+A direct join from customers or sellers to staged geolocation observations does not preserve entity grain.
+
+---
+
+### 9.1 Coverage Results
+
+| Metric                                            |    Result |
+| ------------------------------------------------- | --------: |
+| Customer rows                                     |    99,441 |
+| Distinct customer ZIP prefixes                    |    14,994 |
+| Customers without a geolocation prefix            |       278 |
+| Customer prefixes without geolocation             |       157 |
+| Seller rows                                       |     3,095 |
+| Distinct seller ZIP prefixes                      |     2,246 |
+| Sellers without a geolocation prefix              |         7 |
+| Seller prefixes without geolocation               |         7 |
+| Geolocation rows                                  | 1,000,163 |
+| Distinct geolocation ZIP prefixes                 |    19,015 |
+| Geolocation prefixes without a customer or seller |     4,099 |
+
+Approximately 0.2796% of customer records and 0.2262% of seller records do not have matching geolocation observations.
+
+Missing customer coverage is concentrated in DF:
+
+- 171 of the 278 uncovered customer records are in DF;
+- those records span 67 ZIP prefixes;
+- the remaining uncovered customers are distributed across multiple states.
+
+Missing geolocation coverage does not invalidate the customer or seller record.
+
+Affected entities retain their source-provided city and state. Resolved coordinates remain unavailable unless another governed reference source is introduced.
+
+The 4,099 unused geolocation prefixes represent valid reference coverage rather than anomalies.
+
+---
+
+### 9.2 Geolocation Observation Cardinality
+
+| Condition                                 | ZIP prefixes |
+| ----------------------------------------- | -----------: |
+| Multiple source observations              |       17,972 |
+| Multiple distinct normalized observations |       17,823 |
+| Multiple cities                           |        8,555 |
+| Multiple states                           |            8 |
+| Multiple coordinates                      |       17,781 |
+
+A single ZIP prefix contains up to:
+
+| Metric                           | Maximum |
+| -------------------------------- | ------: |
+| Source observations              |   1,146 |
+| Distinct normalized observations |     779 |
+| City values                      |       5 |
+| State values                     |       2 |
+| Coordinate pairs                 |     746 |
+
+Repeated observations are expected characteristics of the source geolocation dataset. They MUST NOT be joined directly to customer, seller, order, or order-item grain.
+
+---
+
+### 9.4 Multi-sate ZIP Prefixes
+
+Eight ZIP prefixes contain observations from more than one state:
+
+| ZIP prefix | Dominant state | Dominant observations | Conflicting state | Conflicting observations |
+| --- | --- | ---: | --- | ---: |
+| `02116` | `SP` | 12 | `RN` | 1 |
+| `04011` | `SP` | 178 | `AC` | 1 |
+| `21550` | `RJ` | 170 | `AC` | 1 |
+| `23056` | `RJ` | 60 | `AC` | 1 |
+| `72915` | `GO` | 40 | `DF` | 1 |
+| `78557` | `MT` | 96 | `RO` | 1 |
+| `79750` | `MS` | 179 | `RS` | 1 |
+| `80630` | `PR` | 122 | `SC` | 1 |
+
+Each ambiguous prefix has one isolated conflicting observation and one clearly dominant state.
+
+The observations are preserved in staging. A downstream resolved geographic reference may select the modal state using an explicit deterministic rule.
+
+---
+
+### 9.5 Modal-state Validation
+
+The candidate state-resolution rule selects:
+
+- 1. the state with the highest observation count for each ZIP prefix;
+- 2. the alphabetically first state as a deterministic tie-breaker;
+
+No ZIP prefix currently contains a tie between states with the highest observation count. The zero baseline is monitored because a future tie would make the geographic resolution semantically ambiguous even though the lexical tie-breaker remains technically deterministic.
+
+The result was validated against covered customer and seller records:
+
+| Entity    | Covered records | Records disagreeing with modal state |
+| --------- | --------------: | -----------------------------------: |
+| Customers |          99,163 |                                    0 |
+| Sellers   |           3,088 |                                   35 |
+
+The modal-state rule agrees with every covered customer record.
+
+The same 35 seller records identified by the source-consistency profile disagree with the resolved state. Most contain a city and ZIP prefix that agree with geolocation evidence while the source seller state does not.
+
+Of those seller records:
+
+- 33 contain source state SP;
+- one contains source state RN where ZIP resolves to RJ;
+- one contains source state PA where the ZIP resolves to PR;
+
+These records are retained and flagged. The source seller state is not overwritten in staging.
+
+---
+
+### 9.6 Direct-join amplification
+
+| Join | Entity rows | Directly joined rows | Amplification factor |
+| --- | ---: | ---: | ---: |
+| Customers → staged geolocations | 99,441 | 15,083,733 | 151.6853 |
+| Sellers → staged geolocations | 3,095 | 435,094 | 140.5796 |
+
+Direct joins to geolocation observations would substantially overstate entity counts and any downstream measures.
+
+Canonical models MUST NOT join customers, sellers, orders, or order items directly to stg_geolocations by ZIP prefix.
+
+---
+
+### 9.7 Relationship-quality Controls
+
+The permanent Dataform view:
+
+```text
+staging.dq_geographic_relationship_anomalies
+```
+
+reports:
+
+| Anomaly or observation type | Validated baseline | Severity | Disposition |
+| --- | ---: | --- | --- |
+| `customers_without_geolocation_prefix` | 278 | Warning | Retain the customer and source address; flag missing reference coverage and leave resolved coordinates unavailable |
+| `customer_prefixes_without_geolocation_geolocation` | 157 | Informational | Monitor the distinct missing customer ZIP prefixes and investigate material baseline changes |
+| `sellers_without_geolocation_prefix` | 7 |7 | Warning | Retain the seller and source address; flag missing reference coverage and leave resolved coordinates unavailable |
+| `seller_prefixes_without_geolocation` | 7 | Informational | Monitor the distinct missing seller ZIP prefixes and investigate material baseline changes |
+| `customers_disagreeing_with_modal_geolocation_state` | 0 | Warning | Preserve both values and prevent unreviewed geographic correction if customer-state consistency changes |
+| `sellers_disagreeing_with_modal_geolocation_state` | 35 | Warning | Preserve the source state, expose the resolved state and mismatch flag, and use the resolved state only through documented downstream logic |
+| `geolocation_prefixes_with_multiple_states` | 8 | Warning | Preserve all observations and resolve state downstream using an explicit deterministic rule |
+| `geolocation_prefixes` using an explicit deterministic rule |
+| `geolocation_prefixes_without_customer_or_seller` | 4,099 | Informational | Retain unused geographic reference coverage without treating it as invalid |
+| `geolocation_prefixes_with_modal_state_ties` | 0 | Warning | Preserve all observations, apply the approved deterministic tie-breaker, and flag the ambiguous resolution for investigation |
+
+These controls remain non-blocking at staging grain.
+
+---
+
+### 9.8 Canonical Modelling Implications
+
+Mercury requires a resolved geographic reference with:
+
+```text
+One row per geolocation ZIP-code prefix
+```
+
+The resolved relation SHOULD expose:
+
+- geolocation_zip_code_prefix;
+- resolved state;
+- resolved city or city key;
+- representative latitude;
+- representative longitude;
+- source observation count;
+- distinct observation count;
+- state-ambiguity indicator;
+- city-ambiguity indicator;
+- coordinate-ambiguity indicator;
+- documented resolution method.
+
+The modal-state rule is validated for the current Olist source.
+
+City and coordinate resolution MUST also be deterministic and documented before canonical implementation. A robust representatice-coordinate method should reduce sensitivity to isolated coordinate outliers.
+
+Customer and seller dimensions SHOULD preserve:
+
+- source city;
+- source state;
+- resolved geographic state;
+- resolved geographic key where available;
+- geographic coverage flag;
+- state-mismatch flag.
+
+For the 35 known seller mismatches, downstream geographic models may use the resolved state while preserving the original source state for lineage and investigation. This is a deterministic downstream correction under ADR-013, not a staging rewrite.
+
+Entities without matching geolocation prefixes remain valid. They must not be removed from non-geographic analysis.
+
+---
+
+### 9.9 Findings
+
+The geographic exploration establishes that:
+
+- 1. Geolocation ZIP prefixes are not unique in staging.
+- 2. Direct geolocation joins cause extreme row amplification.
+- 3. Customer and seller coverage is high but incomplete.
+- 4. Missing geographic coverage does not invalidate an entity.
+- 5. Most geographic prefixes contain multiple observations and coordinates.
+- 6. Eight prefixes contain isolated conflicting state observations.
+- 7. A deterministic modal-state rule resolves those prefixes without ties.
+- 8. The modal state agrees with every covered customer.
+- 9. Thirty-five sellers contain source states inconsistent with ZIP-based geographic evidence.
+- 10. Canonical models require a resolved one-row-per-ZIP geographic reference.
+- 11. Source and resolved geographic attributes must remain distinguishable.
 
 ---
 
@@ -1294,7 +1517,7 @@ Relationship exploration is complete when:
 - [x] order–review relationships are profiled
 - [x] product–order-item relationships are profiled
 - [x] seller–order-item relationships are profiled
-- [ ] geographic relationships are profiled
+- [x] geographic relationships are profiled
 - [ ] orphaned records and missing children are documented
 - [ ] cardinalities are validated
 - [ ] join amplification is measured
