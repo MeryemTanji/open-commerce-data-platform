@@ -942,6 +942,77 @@ Before product-dependent canonical outputs are published:
 
 ---
 
+### 6.12 Seller–order-item relationship anomalies
+
+#### Scope
+
+The seller–order-item relationship is monitored by:
+
+```text
+staging.dq_seller_order_item_relationship_anomalies
+```
+
+The view detects missing seller references and monitors the marketplace cardinalities between orders, products, and sellers.
+
+Detailed profiling evidence and canonical modelling implications are maintained in the Olist relationship profile.
+
+#### Registered Controls
+
+| Control ID | Anomaly or observation type | Baseline | Severity | Disposition |
+| --- | --- | ---: | --- | --- |
+| `OLIST-SELLER-ITEM-COVERAGE-001` | `order_items_without_seller` | 0 | Warning | Preserve and flag the item; exclude it from seller-dependent canonical outputs until the missing seller reference is investigated |
+| `OLIST-SELLER-ITEM-COVERAGE-002` | `sellers_without_order_items` | 0 | Informational | Retain the seller as valid marketplace data and exclude it only from analyses requiring observed transaction activity |
+| `OLIST-SELLER-ITEM-CARDINALITY-001` | `orders_with_multiple_sellers` | 1,278 | Informational | Preserve every seller association and require seller-aware aggregation in order-grain outputs |
+| `OLIST-SELLER-PRODUCT-CARDINALITY-001` | `products_with_multiple_sellers` | 1,225 | Informational | Preserve seller on the order-item event and do not model seller as a fixed product attribute |
+| `OLIST-SELLER-ITEM-GRAIN-001` | `order_product_combinations_with_multiple_sellers` | 0 | Informational | Preserve seller-level item separation and use seller-aware quantity aggregation if the condition appears |
+
+
+#### Baseline Interpretation
+
+The zero baseline for order_items_without_seller establishes the structural expectation that every order item references a known seller.
+
+A future non-zero count requires investigation before affected records can enter seller-dependent canonical outputs.
+
+The zero baseline for sellers_without_order_items describes the current source extract rather than a universal marketplace requirement. A seller registry may legitimately include registered sellers that have not yet completed a sale.
+
+The non-zero baselines describe valid marketplace topology:
+
+- 1,278 item-bearing orders contain multiple sellers;
+- 1,225 products are associated with multiple sellers.
+
+These conditions MUST NOT be treated as duplicate or invalid records.
+
+The zero baseline for order_product_combinations_with_multiple_sellers supports the current product-quantity behavior. A future non-zero result would require seller-aware quantity grouping but would not automatically invalidate the affected items.
+
+#### Initial Notification Behaviour
+
+| Control ID | Initial notification condition | Initial response |
+| --- | --- | --- |
+| `OLIST-SELLER-ITEM-COVERAGE-001` | Anomaly count becomes greater than zero | Investigate missing seller references before publishing affected seller-dependent outputs |
+| `OLIST-SELLER-ITEM-COVERAGE-002` | Count becomes greater than zero | Confirm whether the source now includes legitimate sellers without transaction activity |
+| `OLIST-SELLER-ITEM-CARDINALITY-001` | Count or rate materially deviates from the validated baseline | Confirm whether marketplace fulfilment behavior or seller attribution has changed |
+| `OLIST-SELLER-PRODUCT-CARDINALITY-001` | Count or rate materially deviates from the validated baseline | Confirm whether product availability across sellers has materially changed |
+| `OLIST-SELLER-ITEM-GRAIN-001` | Count becomes greater than zero | Preserve seller-level item separation and review product-quantity aggregation rules |
+
+Exact automated thresholds and notification routing remain part of the future quality-observability implementation boundary defined by ADR-013.
+
+#### Canonical Publication Requirements
+
+Before seller-dependent canonical outputs are published:
+
+- every order item MUST reference a valid seller or be explicitly excluded from - seller-dependent outputs;
+- the seller dimension SHOULD preserve one row per seller_id;
+- the canonical order-item fact SHOULD preserve one row per (order_id, order_item_id);
+- both seller_id and product_id SHOULD remain on the order-item fact;
+- seller MUST NOT be represented as one unqualified order-level attribute;
+- seller MUST NOT be modelled as a permanent product attribute;
+- multi-seller orders MUST preserve each seller association;
+- seller-level order measures MUST aggregate to (order_id, seller_id) before joining to order grain;
+- quantity derivation MUST remain seller-aware when one order-product combination contains multiple sellers;
+- sellers without order items MUST remain valid marketplace records.
+
+---
+
 ## 7. Accepted Profiled Characteristics
 
 Some observed values satisfy the staging contract and are not currently classified as anomalies.

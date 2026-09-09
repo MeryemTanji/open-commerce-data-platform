@@ -1060,7 +1060,201 @@ The relationship exploration establishes that:
 
 ## 8. Seller–Order Item Relationship
 
-**Status:** Planned
+### 8.1 Relationship definition
+
+The seller–order-item relationship connects:
+
+- `stg_sellers.seller_id`
+- `stg_order_items.seller_id`
+
+Each seller has one unique `seller_id`, while a seller may participate in multiple order-item rows and orders.
+
+The relationship is:
+
+```text
+Seller 1 ────< Order Item
+```
+
+Orders and sellers form a many-to-many relationship through order items:
+
+```text
+Order 1 ────< Order Item >──── 1 Seller
+```
+
+Products and sellers also form a many-to-many relationship through order items because one seller may sell multiple products and one product may be sold by multiple sellers.
+
+---
+
+### 8.2 Coverage and Cardinality Results
+
+| Metric                                    |  Result |
+| ----------------------------------------- | ------: |
+| Seller rows                               |   3,095 |
+| Distinct seller IDs                       |   3,095 |
+| Order-item rows                           | 112,650 |
+| Referenced seller IDs                     |   3,095 |
+| Orders with items                         |  98,666 |
+| Order items without a seller              |       0 |
+| Sellers without order items               |       0 |
+| Sellers with one item row                 |     509 |
+| Sellers with multiple item rows           |   2,586 |
+| Sellers participating in one order        |     571 |
+| Sellers participating in multiple orders  |   2,524 |
+| Sellers associated with one product       |     746 |
+| Sellers associated with multiple products |   2,349 |
+| Minimum item rows per seller              |       1 |
+| Maximum item rows per seller              |   2,033 |
+| Average item rows per seller              | 36.3974 |
+| Minimum orders per seller                 |       1 |
+| Maximum orders per seller                 |   1,854 |
+| Average orders per seller                 | 32.3134 |
+| Maximum products per seller               |     399 |
+| Item-to-seller joined rows                | 112,650 |
+| Item-to-seller join factor                |  1.0000 |
+
+Every staged order item references a valid seller, and every staged seller currently appears in at least one order item.
+
+Joining seller attributes to order-item grain by seller_id does not amplify the item row count.
+
+The absence of sellers without items describes the current Olist source extract. Future seller sources may legitimately contain registered sellers that have not yet completed a sale.
+
+---
+
+### 8.3 Seller Activity
+
+Seller activity varies materially across the marketplace:
+
+- 509 sellers occur in only one item row;
+- 2,586 sellers occur in multiple item rows;
+- 571 sellers participate in only one order;
+- 2,524 sellers participate in multiple orders;
+- 746 sellers are associated with one product;
+- 2,349 sellers are associated with multiple products.
+
+The most active seller is associated with:
+
+- 2,033 item rows;
+- 1,854 orders;
+- 399 products.
+
+These differences describe marketplace participation and seller concentration. They are not treated as source-quality anomalies.
+
+---
+
+### 8.4 Multi-seller Orders
+
+Of the 98,666 orders containing item rows:
+
+| Sellers per order | Orders | Percentage of item-bearing orders |
+| ----------------: | -----: | --------------------------------: |
+|                 1 | 97,388 |                          98.7047% |
+|                 2 |  1,219 |                           1.2355% |
+|                 3 |     54 |                           0.0547% |
+|                 4 |      3 |                           0.0030% |
+|                 5 |      2 |                           0.0020% |
+
+
+A total of 1,278 orders contain items from multiple sellers.
+
+These orders produce:
+
+| Metric                                        |  Result |
+| --------------------------------------------- | ------: |
+| Item-bearing orders                           |  98,666 |
+| Order–seller combinations                     | 100,010 |
+| Additional order–seller associations          |   1,344 |
+| Maximum sellers per order                     |       5 |
+| Average sellers per order                     |  1.0136 |
+| Maximum items per order–seller combination    |      21 |
+| Maximum products per order–seller combination |       7 |
+
+
+Seller MUST NOT be represented as one unqualified order-level attribute. Any order-level seller representation must preserve multiple seller associations or use an explicitly documented aggregation.
+
+---
+
+### 8.5 Product-seller Behaviour
+
+| Metric                                           | Result |
+| ------------------------------------------------ | -----: |
+| Referenced products                              | 32,951 |
+| Products sold by one seller                      | 31,726 |
+| Products sold by multiple sellers                |  1,225 |
+| Maximum sellers per product                      |      8 |
+| Average sellers per product                      | 1.0454 |
+| Order-product combinations with multiple sellers |      0 |
+
+
+Approximately 3.7176% of referenced products are associated with multiple sellers across the dataset.
+
+Seller is therefore not an intrinsic or permanent product attribute. The association between a product and seller belongs to the commercial order-item event.
+
+No individual (order_id, product_id) combination currently contains multiple sellers. This supports the current quantity behavior while the permanent control detects future changes.
+
+---
+
+### 8.6 Relationship-quality Controls
+
+The permanent Dataform view:
+
+```text
+staging.dq_seller_order_item_relationship_anomalies
+```
+
+reports:
+
+| Anomaly or observation type | Validated baseline | Severity | Disposition |
+| --- | ---: | --- | --- |
+| `order_items_without_seller` | 0 | Warning | Preserve and flag the item; exclude it from seller-dependent canonical outputs until the missing seller reference is investigated |
+| `sellers_without_order_items` | 0 | Informational | Retain the seller as valid marketplace data and exclude it only from analyses requiring observed transaction activity |
+| `orders_with_multiple_sellers` | 1,278 | Informational | Preserve every seller association and require seller-aware aggregation in order-grain outputs |
+| `products_with_multiple_sellers` | 1,225 | Informational | Preserve seller on the order-item event and do not model seller as a fixed product attribute |
+| `order_product_combinations_with_multiple_sellers` | 0 | Informational | Preserve seller-level item separation and use seller-aware quantity aggregation if the condition appears |
+
+The non-zero controls describe valid marketplace cardinality rather than quality failures.
+
+The zero-baseline controls detect broken references or changes that affect the grain required for safe aggregation.
+
+---
+
+### 8.7 Canonical Modelling Implications
+
+The canonical model SHOULD contain:
+
+| Canonical relation | Grain | Purpose |
+| --- | --- | --- |
+| Seller dimension | One row per `seller_id` | Stores standardised seller attributes |
+| Product dimension | One row per `product_id` | Stores product attributes independently of seller |
+| Order-item fact | One row per `(order_id, order_item_id)` | Preserves the commercial association between order, product, and seller |
+| Optional order–seller summary | One row per `(order_id, seller_id)` | Supports seller-level fulfilment and order analysis after aggregation |
+
+The canonical order-item fact SHOULD retain both:
+
+- product_id;
+- seller_id.
+
+Seller MUST NOT be:
+
+- flattened directly onto order grain without resolving multi-seller orders;
+- stored as a permanent product-dimension attribute;
+- inferred from product identity alone.
+
+Item measures MUST be aggregated to the required order–seller or seller–product grain before they are joined to other one-to-many relationships such as payments or reviews.
+
+---
+
+### 8.8 Findings
+
+The relationship exploration establishes that:
+
+- 1. Every staged order item references a valid seller.
+- 2. Every staged seller currently participates in at least one item.
+- 3. Seller attributes can be joined to order-item grain without amplification.
+- 4. Most item-bearing orders have one seller, but 1,278 contain multiple sellers.
+- 5. One product may be sold by multiple sellers.
+- 6. Seller belongs to the commercial order-item event rather than the order or product alone.
+- 7. The canonical order-item fact must preserve both seller and product references.
+- 8. Seller-level order analysis requires explicit aggregation at (order_id, seller_id) grain.
 
 ---
 
@@ -1099,7 +1293,7 @@ Relationship exploration is complete when:
 - [x] order–payment relationships are profiled
 - [x] order–review relationships are profiled
 - [x] product–order-item relationships are profiled
-- [ ] seller–order-item relationships are profiled
+- [x] seller–order-item relationships are profiled
 - [ ] geographic relationships are profiled
 - [ ] orphaned records and missing children are documented
 - [ ] cardinalities are validated
