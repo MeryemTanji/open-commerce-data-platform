@@ -1,0 +1,129 @@
+config {
+  type: "view",
+  schema: "staging",
+  name: "dq_product_order_item_relationship_anomalies",
+  description: "Non-blocking observations of product and order-item relationship coverage and repeated-product commercial consistency."
+}
+
+WITH order_product_profiles AS (
+  SELECT
+    order_id,
+    product_id,
+    COUNT(*) AS item_count,
+    COUNT(DISTINCT seller_id) AS seller_count,
+    COUNT(DISTINCT price) AS price_count,
+    COUNT(DISTINCT freight_value) AS freight_value_count,
+    COUNT(DISTINCT shipping_limit_timestamp)
+      AS shipping_limit_timestamp_count
+  FROM ${ref("stg_order_items")}
+  GROUP BY
+    order_id,
+    product_id
+),
+
+relationship_metrics AS (
+  SELECT
+    (
+      SELECT COUNT(*)
+      FROM ${ref("stg_order_items")} AS oi
+      LEFT JOIN ${ref("stg_products")} AS p
+        USING (product_id)
+      WHERE p.product_id IS NULL
+    ) AS order_items_without_product,
+
+    (
+      SELECT COUNT(*)
+      FROM ${ref("stg_products")} AS p
+      LEFT JOIN (
+        SELECT DISTINCT product_id
+        FROM ${ref("stg_order_items")}
+      ) AS oi
+        USING (product_id)
+      WHERE oi.product_id IS NULL
+    ) AS products_without_order_items,
+
+    (
+      SELECT COUNT(*)
+      FROM order_product_profiles
+      WHERE item_count > 1
+    ) AS repeated_order_product_combinations,
+
+    (
+      SELECT COUNT(*)
+      FROM order_product_profiles
+      WHERE
+        item_count > 1
+        AND seller_count > 1
+    ) AS repeated_order_products_with_multiple_sellers,
+
+    (
+      SELECT COUNT(*)
+      FROM order_product_profiles
+      WHERE
+        item_count > 1
+        AND price_count > 1
+    ) AS repeated_order_products_with_multiple_prices,
+
+    (
+      SELECT COUNT(*)
+      FROM order_product_profiles
+      WHERE
+        item_count > 1
+        AND freight_value_count > 1
+    ) AS repeated_order_products_with_multiple_freight_values,
+
+    (
+      SELECT COUNT(*)
+      FROM order_product_profiles
+      WHERE
+        item_count > 1
+        AND shipping_limit_timestamp_count > 1
+    ) AS repeated_order_products_with_multiple_shipping_limits
+)
+
+SELECT
+  "order_items_without_product" AS anomaly_type,
+  order_items_without_product AS anomaly_count
+FROM relationship_metrics
+
+UNION ALL
+
+SELECT
+  "products_without_order_items" AS anomaly_type,
+  products_without_order_items AS anomaly_count
+FROM relationship_metrics
+
+UNION ALL
+
+SELECT
+  "repeated_order_product_combinations" AS anomaly_type,
+  repeated_order_product_combinations AS anomaly_count
+FROM relationship_metrics
+
+UNION ALL
+
+SELECT
+  "repeated_order_products_with_multiple_sellers" AS anomaly_type,
+  repeated_order_products_with_multiple_sellers AS anomaly_count
+FROM relationship_metrics
+
+UNION ALL
+
+SELECT
+  "repeated_order_products_with_multiple_prices" AS anomaly_type,
+  repeated_order_products_with_multiple_prices AS anomaly_count
+FROM relationship_metrics
+
+UNION ALL
+
+SELECT
+  "repeated_order_products_with_multiple_freight_values" AS anomaly_type,
+  repeated_order_products_with_multiple_freight_values AS anomaly_count
+FROM relationship_metrics
+
+UNION ALL
+
+SELECT
+  "repeated_order_products_with_multiple_shipping_limits" AS anomaly_type,
+  repeated_order_products_with_multiple_shipping_limits AS anomaly_count
+FROM relationship_metrics
