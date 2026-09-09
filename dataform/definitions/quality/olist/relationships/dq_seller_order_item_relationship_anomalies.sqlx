@@ -1,0 +1,106 @@
+config {
+  type: "view",
+  schema: "staging",
+  name: "dq_seller_order_item_relationship_anomalies",
+  description: "Non-blocking observations of seller and order-item relationship coverage and marketplace cardinality."
+}
+
+WITH order_profiles AS (
+  SELECT
+    order_id,
+    COUNT(DISTINCT seller_id) AS seller_count
+  FROM ${ref("stg_order_items")}
+  GROUP BY order_id
+),
+
+product_profiles AS (
+  SELECT
+    product_id,
+    COUNT(DISTINCT seller_id) AS seller_count
+  FROM ${ref("stg_order_items")}
+  GROUP BY product_id
+),
+
+order_product_profiles AS (
+  SELECT
+    order_id,
+    product_id,
+    COUNT(DISTINCT seller_id) AS seller_count
+  FROM ${ref("stg_order_items")}
+  GROUP BY
+    order_id,
+    product_id
+),
+
+relationship_metrics AS (
+  SELECT
+    (
+      SELECT COUNT(*)
+      FROM ${ref("stg_order_items")} AS oi
+      LEFT JOIN ${ref("stg_sellers")} AS s
+        USING (seller_id)
+      WHERE s.seller_id IS NULL
+    ) AS order_items_without_seller,
+
+    (
+      SELECT COUNT(*)
+      FROM ${ref("stg_sellers")} AS s
+      LEFT JOIN (
+        SELECT DISTINCT seller_id
+        FROM ${ref("stg_order_items")}
+      ) AS oi
+        USING (seller_id)
+      WHERE oi.seller_id IS NULL
+    ) AS sellers_without_order_items,
+
+    (
+      SELECT COUNT(*)
+      FROM order_profiles
+      WHERE seller_count > 1
+    ) AS orders_with_multiple_sellers,
+
+    (
+      SELECT COUNT(*)
+      FROM product_profiles
+      WHERE seller_count > 1
+    ) AS products_with_multiple_sellers,
+
+    (
+      SELECT COUNT(*)
+      FROM order_product_profiles
+      WHERE seller_count > 1
+    ) AS order_product_combinations_with_multiple_sellers
+)
+
+SELECT
+  "order_items_without_seller" AS anomaly_type,
+  order_items_without_seller AS anomaly_count
+FROM relationship_metrics
+
+UNION ALL
+
+SELECT
+  "sellers_without_order_items" AS anomaly_type,
+  sellers_without_order_items AS anomaly_count
+FROM relationship_metrics
+
+UNION ALL
+
+SELECT
+  "orders_with_multiple_sellers" AS anomaly_type,
+  orders_with_multiple_sellers AS anomaly_count
+FROM relationship_metrics
+
+UNION ALL
+
+SELECT
+  "products_with_multiple_sellers" AS anomaly_type,
+  products_with_multiple_sellers AS anomaly_count
+FROM relationship_metrics
+
+UNION ALL
+
+SELECT
+  "order_product_combinations_with_multiple_sellers" AS anomaly_type,
+  order_product_combinations_with_multiple_sellers AS anomaly_count
+FROM relationship_metrics
