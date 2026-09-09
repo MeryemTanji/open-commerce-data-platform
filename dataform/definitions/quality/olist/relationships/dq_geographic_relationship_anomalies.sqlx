@@ -1,0 +1,219 @@
+config {
+  type: "view",
+  schema: "staging",
+  name: "dq_geographic_relationship_anomalies",
+  description: "Non-blocking observations of customer, seller, and geolocation relationship coverage, state consistency, and modal-state resolution ambiguity."
+}
+
+WITH geolocation_prefixes AS (
+  SELECT DISTINCT
+    geolocation_zip_code_prefix AS zip_code_prefix
+  FROM ${ref("stg_geolocations")}
+),
+
+entity_zip_prefixes AS (
+  SELECT
+    customer_zip_code_prefix AS zip_code_prefix
+  FROM ${ref("stg_customers")}
+
+  UNION DISTINCT
+
+  SELECT
+    seller_zip_code_prefix AS zip_code_prefix
+  FROM ${ref("stg_sellers")}
+),
+
+state_counts AS (
+  SELECT
+    geolocation_zip_code_prefix AS zip_code_prefix,
+    geolocation_state,
+    COUNT(*) AS observation_count
+  FROM ${ref("stg_geolocations")}
+  GROUP BY
+    geolocation_zip_code_prefix,
+    geolocation_state
+),
+
+state_leader_counts AS (
+  SELECT
+    zip_code_prefix,
+    COUNTIF(observation_count = maximum_observation_count)
+      AS leading_state_count
+  FROM (
+    SELECT
+      zip_code_prefix,
+      observation_count,
+      MAX(observation_count) OVER (
+        PARTITION BY zip_code_prefix
+      ) AS maximum_observation_count
+    FROM state_counts
+  )
+  GROUP BY zip_code_prefix
+),
+
+modal_state_ties AS (
+  SELECT
+    zip_code_prefix
+  FROM state_leader_counts
+  WHERE leading_state_count > 1
+),
+
+ranked_states AS (
+  SELECT
+    zip_code_prefix,
+    geolocation_state,
+    observation_count,
+    ROW_NUMBER() OVER (
+      PARTITION BY zip_code_prefix
+      ORDER BY
+        observation_count DESC,
+        geolocation_state
+    ) AS state_rank
+  FROM state_counts
+),
+
+resolved_states AS (
+  SELECT
+    zip_code_prefix,
+    geolocation_state AS resolved_state
+  FROM ranked_states
+  WHERE state_rank = 1
+),
+
+multi_state_prefixes AS (
+  SELECT
+    zip_code_prefix
+  FROM state_counts
+  GROUP BY zip_code_prefix
+  HAVING COUNT(*) > 1
+),
+
+relationship_metrics AS (
+  SELECT
+    (
+      SELECT COUNT(*)
+      FROM ${ref("stg_customers")} AS c
+      LEFT JOIN geolocation_prefixes AS g
+        ON c.customer_zip_code_prefix = g.zip_code_prefix
+      WHERE g.zip_code_prefix IS NULL
+    ) AS customers_without_geolocation_prefix,
+
+    (
+      SELECT COUNT(DISTINCT c.customer_zip_code_prefix)
+      FROM ${ref("stg_customers")} AS c
+      LEFT JOIN geolocation_prefixes AS g
+        ON c.customer_zip_code_prefix = g.zip_code_prefix
+      WHERE g.zip_code_prefix IS NULL
+    ) AS customer_prefixes_without_geolocation,
+
+    (
+      SELECT COUNT(*)
+      FROM ${ref("stg_sellers")} AS s
+      LEFT JOIN geolocation_prefixes AS g
+        ON s.seller_zip_code_prefix = g.zip_code_prefix
+      WHERE g.zip_code_prefix IS NULL
+    ) AS sellers_without_geolocation_prefix,
+
+    (
+      SELECT COUNT(DISTINCT s.seller_zip_code_prefix)
+      FROM ${ref("stg_sellers")} AS s
+      LEFT JOIN geolocation_prefixes AS g
+        ON s.seller_zip_code_prefix = g.zip_code_prefix
+      WHERE g.zip_code_prefix IS NULL
+    ) AS seller_prefixes_without_geolocation,
+
+    (
+      SELECT COUNT(*)
+      FROM ${ref("stg_customers")} AS c
+      JOIN resolved_states AS r
+        ON c.customer_zip_code_prefix = r.zip_code_prefix
+      WHERE c.customer_state != r.resolved_state
+    ) AS customers_disagreeing_with_modal_geolocation_state,
+
+    (
+      SELECT COUNT(*)
+      FROM ${ref("stg_sellers")} AS s
+      JOIN resolved_states AS r
+        ON s.seller_zip_code_prefix = r.zip_code_prefix
+      WHERE s.seller_state != r.resolved_state
+    ) AS sellers_disagreeing_with_modal_geolocation_state,
+
+    (
+      SELECT COUNT(*)
+      FROM multi_state_prefixes
+    ) AS geolocation_prefixes_with_multiple_states,
+
+    (
+      SELECT COUNT(*)
+      FROM geolocation_prefixes AS g
+      LEFT JOIN entity_zip_prefixes AS e
+        USING (zip_code_prefix)
+      WHERE e.zip_code_prefix IS NULL
+    ) AS geolocation_prefixes_without_customer_or_seller,
+
+    (
+      SELECT COUNT(*)
+      FROM modal_state_ties
+    ) AS geolocation_prefixes_with_modal_state_ties
+)
+
+SELECT
+  "customers_without_geolocation_prefix" AS anomaly_type,
+  customers_without_geolocation_prefix AS anomaly_count
+FROM relationship_metrics
+
+UNION ALL
+
+SELECT
+  "customer_prefixes_without_geolocation" AS anomaly_type,
+  customer_prefixes_without_geolocation AS anomaly_count
+FROM relationship_metrics
+
+UNION ALL
+
+SELECT
+  "sellers_without_geolocation_prefix" AS anomaly_type,
+  sellers_without_geolocation_prefix AS anomaly_count
+FROM relationship_metrics
+
+UNION ALL
+
+SELECT
+  "seller_prefixes_without_geolocation" AS anomaly_type,
+  seller_prefixes_without_geolocation AS anomaly_count
+FROM relationship_metrics
+
+UNION ALL
+
+SELECT
+  "customers_disagreeing_with_modal_geolocation_state" AS anomaly_type,
+  customers_disagreeing_with_modal_geolocation_state AS anomaly_count
+FROM relationship_metrics
+
+UNION ALL
+
+SELECT
+  "sellers_disagreeing_with_modal_geolocation_state" AS anomaly_type,
+  sellers_disagreeing_with_modal_geolocation_state AS anomaly_count
+FROM relationship_metrics
+
+UNION ALL
+
+SELECT
+  "geolocation_prefixes_with_multiple_states" AS anomaly_type,
+  geolocation_prefixes_with_multiple_states AS anomaly_count
+FROM relationship_metrics
+
+UNION ALL
+
+SELECT
+  "geolocation_prefixes_without_customer_or_seller" AS anomaly_type,
+  geolocation_prefixes_without_customer_or_seller AS anomaly_count
+FROM relationship_metrics
+
+UNION ALL
+
+SELECT
+  "geolocation_prefixes_with_modal_state_ties" AS anomaly_type,
+  geolocation_prefixes_with_modal_state_ties AS anomaly_count
+FROM relationship_metrics
