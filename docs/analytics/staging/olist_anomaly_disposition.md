@@ -875,6 +875,73 @@ Before canonical review outputs are published:
 
 ---
 
+### 6.11 Product–order-item relationship anomalies
+
+#### Scope
+
+The product–order-item relationship is monitored by:
+
+```text
+staging.dq_product_order_item_relationship_anomalies
+```
+
+The view detects broken product references and monitors whether repeated products within an order continue to share consistent commercial and fulfilment attributes.
+
+Detailed profiling evidence and canonical modelling implications are maintained in the Olist relationship profile.
+
+#### Registered Controls
+
+| Control ID | Anomaly or observation type | Baseline | Severity | Disposition |
+| --- | --- | ---: | --- | --- |
+| `OLIST-PRODUCT-ITEM-COVERAGE-001` | `order_items_without_product` | 0 | Warning | Preserve and flag the item; exclude it from product-dependent canonical outputs until its missing product reference is investigated |
+| `OLIST-PRODUCT-ITEM-COVERAGE-002` | `products_without_order_items` | 0 | Informational | Retain the product as valid catalogue data and exclude it only from analyses requiring an observed sale |
+| `OLIST-PRODUCT-ITEM-QUANTITY-001` | `repeated_order_product_combinations` | 7,088 | Informational | Preserve every item row and interpret repetition as quantity only through an explicit downstream aggregation |
+| `OLIST-PRODUCT-ITEM-GRAIN-001` | `repeated_order_products_with_multiple_sellers` | 0 | Informational | Preserve separate item rows and aggregate at a grain that includes `seller_id` |
+| `OLIST-PRODUCT-ITEM-GRAIN-002` | `repeated_order_products_with_multiple_prices` | 0 | Informational | Preserve separate item rows and aggregate at a grain that includes unit price |
+| `OLIST-PRODUCT-ITEM-GRAIN-003` | `repeated_order_products_with_multiple_freight_values` | 0 | Informational | Preserve separate item rows and aggregate at a grain that includes freight value |
+| `OLIST-PRODUCT-ITEM-GRAIN-004` | `repeated_order_products_with_multiple_shipping_limits` | 0 | Informational | Preserve separate item rows and aggregate at a grain that includes the shipping limit |
+
+#### Baseline Interpretation
+
+The zero baseline for order_items_without_product establishes the structural expectation that every order item references a known product.
+
+A future non-zero count requires investigation before affected items can enter product-dependent canonical outputs.
+
+The zero baseline for products_without_order_items describes the current source extract rather than a universal platform requirement. A product catalogue may legitimately contain unsold products.
+
+The 7,088 repeated order-product combinations describe the current representation of product quantity. Their component item rows currently share the same seller, price, freight value, and shipping limit.
+
+The four grain-consistency controls protect this interpretation. A future non-zero result does not necessarily indicate invalid data. It indicates that (order_id, product_id) is no longer sufficiently precise for deriving a single quantity group.
+
+#### Initial Notification Behaviour
+
+| Control ID | Initial notification condition | Initial response |
+| --- | --- | --- |
+| `OLIST-PRODUCT-ITEM-COVERAGE-001` | Anomaly count becomes greater than zero | Investigate missing product references before publishing affected product-dependent outputs |
+| `OLIST-PRODUCT-ITEM-COVERAGE-002` | Count becomes greater than zero | Confirm whether the source now includes legitimate unsold catalogue products |
+| `OLIST-PRODUCT-ITEM-QUANTITY-001` | Count or rate materially deviates from the validated baseline | Confirm whether the source’s item-level quantity representation has changed |
+| `OLIST-PRODUCT-ITEM-GRAIN-001` | Count becomes greater than zero | Preserve seller-level separation and review the downstream quantity grouping |
+| `OLIST-PRODUCT-ITEM-GRAIN-002` | Count becomes greater than zero | Preserve price-level separation and review the downstream quantity grouping |
+| `OLIST-PRODUCT-ITEM-GRAIN-003` | Count becomes greater than zero | Preserve freight-level separation and review the downstream quantity grouping |
+| `OLIST-PRODUCT-ITEM-GRAIN-004` | Count becomes greater than zero | Preserve shipping-limit separation and review the downstream quantity grouping |
+
+Exact automated thresholds and notification routing remain part of the future quality-observability implementation boundary defined by ADR-013.
+
+#### Canonical Publication Requirements
+
+Before product-dependent canonical outputs are published:
+
+- each order item MUST reference a valid product or be explicitly excluded from product-dependent outputs;
+- the canonical order-item fact SHOULD preserve one row per (order_id, order_item_id);
+- product attributes MAY be joined to order-item grain by product_id;
+- repeated order-item rows MUST NOT be removed as duplicates;
+- quantity MAY be derived by counting item rows only at an explicitly documented commercial grain;
+- quantity aggregation SHOULD distinguish seller, unit price, freight value, and shipping limit;
+- products without order items MUST remain valid catalogue records;
+- order-item measures MUST be aggregated before joining to other one-to-many order relationships.
+
+---
+
 ## 7. Accepted Profiled Characteristics
 
 Some observed values satisfy the staging contract and are not currently classified as anomalies.

@@ -869,7 +869,192 @@ The relationship exploration establishes that:
 
 ## 7. Product–Order Item Relationship
 
-**Status:** Planned
+### 7.1 Relationship definition
+
+The product–order-item relationship connects:
+
+- `stg_products.product_id`
+- `stg_order_items.product_id`
+
+Each staged product has one unique `product_id`, while a product may occur in multiple order-item rows.
+
+The relationship is:
+
+```text
+Product 1 ────< Order Item
+```
+
+Orders and products form a many-to-many relationship through order items:
+
+```text
+Order 1 ────< Order Item >──── 1 Product
+```
+
+The validated order-item grain remains:
+
+```text
+(order_id, order_item_id)
+```
+
+---
+
+### 7.2 Coverage and Cardinality Results
+
+| Metric                                |  Result |
+| ------------------------------------- | ------: |
+| Product rows                          |  32,951 |
+| Distinct product IDs                  |  32,951 |
+| Order-item rows                       | 112,650 |
+| Referenced product IDs                |  32,951 |
+| Orders with items                     |  98,666 |
+| Order items without a product         |       0 |
+| Products without order items          |       0 |
+| Products with one item row            |  18,117 |
+| Products with multiple item rows      |  14,834 |
+| Products occurring in one order       |  19,564 |
+| Products occurring in multiple orders |  13,387 |
+| Minimum item rows per used product    |       1 |
+| Maximum item rows per used product    |     527 |
+| Average item rows per used product    |  3.4187 |
+| Minimum orders per used product       |       1 |
+| Maximum orders per used product       |     467 |
+| Average orders per used product       |  3.1084 |
+| Item-to-product joined rows           | 112,650 |
+| Item-to-product join factor           |  1.0000 |
+
+Every staged order item references a valid product, and every staged product appears in at least one order item.
+
+Joining product attributes to the order-item grain by product_id does not amplify the item row count.
+
+The absence of unused products describes the current Olist dataset. It MUST NOT become a universal platform assumption because a complete product catalogue may legitimately include products that have never been ordered.
+
+---
+
+### 7.3 Repeated Products within Orders
+
+The staged order items contain:
+
+| Metric                                              |  Result |
+| --------------------------------------------------- | ------: |
+| Distinct `(order_id, product_id)` combinations      | 102,425 |
+| Combinations with multiple item rows                |   7,088 |
+| Item rows represented by repeated combinations      |  17,313 |
+| Additional quantity rows beyond one per combination |  10,225 |
+| Maximum item rows per order-product combination     |      20 |
+
+Repeated order-product combinations retain consistent commercial and fulfilment attributes:
+
+| Consistency observation                             | Count |
+| --------------------------------------------------- | ----: |
+| Repeated combinations with multiple sellers         |     0 |
+| Repeated combinations with multiple prices          |     0 |
+| Repeated combinations with multiple freight values  |     0 |
+| Repeated combinations with multiple shipping limits |     0 |
+
+This supports interpreting each repeated order-item row as an individual product unit in the current dataset.
+
+---
+
+### 7.4 Inferred Quantity Distribution
+
+| Inferred quantity | Order-product combinations | Represented item rows |
+| ----------------: | -------------------------: | --------------------: |
+|                 1 |                     95,337 |                95,337 |
+|                 2 |                      5,382 |                10,764 |
+|                 3 |                        953 |                 2,859 |
+|                 4 |                        390 |                 1,560 |
+|                 5 |                        168 |                   840 |
+|                 6 |                        172 |                 1,032 |
+|                 7 |                          4 |                    28 |
+|                 8 |                          2 |                    16 |
+|                 9 |                          2 |                    18 |
+|                10 |                          5 |                    50 |
+|                11 |                          1 |                    11 |
+|                12 |                          2 |                    24 |
+|                13 |                          1 |                    13 |
+|                14 |                          2 |                    28 |
+|                15 |                          2 |                    30 |
+|                20 |                          2 |                    40 |
+
+Quantity can be inferred as the number of item rows within a consistently defined commercial grouping. The staging layer does not collapse these rows or add a derived quantity column.
+
+---
+
+### 7.5 Relationship-quality Controls
+
+The permanent Dataform view:
+
+```text
+staging.dq_product_order_item_relationship_anomalies
+```
+
+reports:
+
+| Anomaly or observation type | Validated baseline | Severity | Disposition |
+| --- | ---: | --- | --- |
+| `order_items_without_product` | 0 | Warning | Preserve and flag the item; exclude it from product-dependent canonical outputs until its missing product reference is investigated |
+| `products_without_order_items` | 0 | Informational | Retain the product as valid catalogue data and exclude it only from analyses requiring an observed sale |
+| `repeated_order_product_combinations` | 7,088 | Informational | Preserve every item row and interpret repeated rows as quantity only through an explicit downstream aggregation |
+| `repeated_order_products_with_multiple_sellers` | 0 | Informational | Preserve the separate item rows and aggregate at a grain that includes `seller_id` |
+| `repeated_order_products_with_multiple_prices` | 0 | Informational | Preserve the separate item rows and aggregate at a grain that includes unit price |
+| `repeated_order_products_with_multiple_freight_values` | 0 | Informational | Preserve the separate item rows and aggregate at a grain that includes freight value |
+| `repeated_order_products_with_multiple_shipping_limits` | 0 | Informational | Preserve the separate item rows and aggregate at a grain that includes the shipping limit |
+
+The four commercial-consistency observations do not define future non-zero results as invalid. They detect when (order_id, product_id) is no longer sufficiently precise for deriving a single quantity group.
+
+---
+
+### 7.6 Canonical Modelling Implications
+
+The canonical order-item fact SHOULD preserve:
+
+```text
+One row per (order_id, order_item_id)
+```
+
+At this grain:
+
+- product_id references the product dimension;
+- seller_id identifies the seller responsible for the item;
+- price represents the item-level unit price;
+- freight_value remains attributable to the individual item row;
+- product attributes can be joined without changing row count;
+- item-level monetary measures remain additive.
+
+A downstream order-product summary MAY derive quantity using:
+
+```sql
+COUNT(*) AS quantity
+```
+The reusable grouping grain SHOULD include:
+
+```text
+order_id
+product_id
+seller_id
+price
+freight_value
+shipping_limit_timestamp
+```
+
+This prevents future item rows with different sellers, prices, freight charges, or fulfilment terms from being incorrectly collapsed.
+
+Order-level product measures MUST aggregate order items before joining them to other one-to-many order relationships such as payments or reviews.
+
+---
+
+### 7.7 Findings
+
+The relationship exploration establishes that:
+
+- 1. Every staged order item references a valid product.
+- 2. Every staged product currently appears in at least one order item.
+- 3. Product attributes can be joined to order-item grain without amplification.
+- 4. Products are reused across orders as expected.
+- 5. Repeated products within one order behave consistently like product quantity in the current data.
+- 6. The unit-level (order_id, order_item_id) grain remains the safest canonical order-item grain.
+- 7. Quantity derivation must remain explicit and commercially grain-aware.
+- 8. Unused catalogue products must remain valid if they appear in future sources.
 
 ---
 
@@ -913,7 +1098,7 @@ Relationship exploration is complete when:
 - [x] order–order-item relationships are profiled
 - [x] order–payment relationships are profiled
 - [x] order–review relationships are profiled
-- [ ] product–order-item relationships are profiled
+- [x] product–order-item relationships are profiled
 - [ ] seller–order-item relationships are profiled
 - [ ] geographic relationships are profiled
 - [ ] orphaned records and missing children are documented
