@@ -275,14 +275,16 @@ The reusable staging standard and Olist staging contracts have been implemented 
 
 The anomaly-disposition and monitoring contract has been defined, with Olist controls, validated baselines, severities, ownership, response expectations, and downstream dispositions documented.
 
-Current work is focused on relationship exploration across staged entities. This phase will validate cardinalities, referential integrity, join amplification, reconciliation behavior, and the modelling constraints required for the canonical business model.
+Relationship exploration across the staged Olist entities is complete. The validated findings document referential coverage, cardinalities, identity behavior, monetary reconciliation, geographic-resolution requirements, and the safeguards needed to prevent join amplification.
+
+Current work is moving into canonical model design. This phase will translate the staging contracts, anomaly dispositions, and relationship findings into reusable business entities with explicit grains, governed relationships, and publication controls.
 
 Operational implementation of quality history, baseline evaluation, and automated alerting is planned as part of **Phase 4 — Production Platform**.
 
 The next major steps are:
 
 ```text
-Relationship Exploration
+Canonical Model Design
         ↓
 Canonical Business Model
         ↓

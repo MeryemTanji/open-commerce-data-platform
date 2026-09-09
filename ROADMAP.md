@@ -272,19 +272,19 @@ Define how Mercury governs, records, communicates, and responds to blocking and 
 
 #### 3.6 Relationship Exploration
 
-**Status**: [wip] In Progress
+**Status**: [x] Complete
 
 Before implementing the canonical model:
 
-- [ ] profile relationships between staged entities
-- [ ] validate expected parent-child relationships
-- [ ] investigate referential-integrity gaps
-- [ ] validate cardinalities
-- [ ] measure join amplification across one-to-many relationships
-- [ ] reconcile related measures across staged entities
-- [ ] identify modelling implications of source anomalies
-- [ ] define dispositions for newly discovered relationship anomalies
-- [ ] document canonical modelling inputs and decisions
+- [x] profile relationships between staged entities
+- [x] validate expected parent-child relationships
+- [x] investigate referential-integrity gaps
+- [x] validate cardinalities
+- [x] measure join amplification across one-to-many relationships
+- [x] reconcile related measures across staged entities
+- [x] identify modelling implications of source anomalies
+- [x] define dispositions for newly discovered relationship anomalies
+- [x] document canonical modelling inputs and decisions
 
 #### 3.7 Canonical Business Model
 

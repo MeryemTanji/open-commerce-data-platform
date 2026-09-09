@@ -6,20 +6,20 @@ Active
 
 ## Date
 
-2026-09-01
+2026-09-09
 
 ## Purpose
 
-This document records the operational and analytical dispositions for data-quality controls implemented for Mercury's Olist staging layer.
+This document is the operational control register for data-quality findings detected in Mercury's staged Olist data and across relationships between staged Olist entities.
 
 It applies the platform-wide policy defined by:
 
 - [ADR-012: Staging Layer Standardization and Semantic Contracts](../../../architecture/decisions/ADR-012-Staging%20Layer%20Standardization%20and%20Semantic%20Contracts.md);
 - [ADR-013: Data Quality Anomaly Disposition and Monitoring Contract](../../../architecture/decisions/ADR-013-Data%20Quality%20Anomaly%20Disposition%20and%20Monitoring%20Contract.md).
 
-The schemas, grains, semantic types, normalization rules, and structural expectations remain defined in the [Olist staging contracts](olist_staging_contracts.md).
+The schemas, grains, semantic types, normalization rules, and structural expectations remain defined in the [Olist staging contracts](olist_staging_contracts.md). Profiling evidence, observed relationship behavior, join-amplification analysis, and canonical modelling inputs remain defined in the [Olist relationship profile](../relationships/olist_relationship_profile.md).
 
-This register does not redefine those contracts. It documents what Mercury must do when a control fails or an Olist source anomaly is detected.
+This register does not reproduce those contracts or profiling findings. It owns the stable control identifiers, approved baselines, severities, dispositions, notification conditions, response expectations, and publication safeguards for Olist-specific controls.
 
 ---
 
@@ -28,13 +28,13 @@ This register does not redefine those contracts. It documents what Mercury must 
 This register covers:
 
 - all blocking Dataform assertions implemented for the eight Olist staging models;
-- all non-blocking quality views implemented for the Olist staging layer;
+- all non-blocking quality views implemented for the Olist staging layer and its cross-entity relationships;
 - current validated anomaly baselines;
 - downstream analytical dispositions;
 - initial severity and notification requirements;
 - engineer response expectations;
 - controls that currently report zero anomalies;
-- future relationship anomalies discovered during Phase 3.6.
+- relationship controls implemented and validated during Phase 3.6.
 
 This register does not define:
 
@@ -42,7 +42,7 @@ This register does not define:
 - deployed alerting infrastructure;
 - notification channels;
 - canonical model implementation;
-- relationship findings that have not yet been profiled.
+- profiling evidence, relationship cardinalities, and join-amplification results recorded in the Olist relationship profile.
 
 Those implementation details will be documented when they enter active implementation scope.
 
@@ -54,7 +54,7 @@ The Olist quality implementation currently includes:
 
 - 8 staging tables;
 - 21 blocking Dataform assertions;
-- 5 non-blocking quality views;
+- 13 non-blocking quality views;
 - successful compilation of the complete Dataform graph;
 - successful BigQuery dry runs;
 - successful execution under the dedicated Dataform transformation identity;
@@ -69,10 +69,18 @@ The non-blocking quality views are:
 | `dq_payments_anomalies` | Surfaces unusual payment sequencing and values |
 | `dq_reviews_chronology_anomalies` | Surfaces invalid review chronology |
 | `dq_geolocations_duplicate_observations` | Surfaces repeated geolocation observations |
+| `dq_customer_order_relationship_anomalies` | Monitors customer–order coverage and source-instance cardinality |
+| `dq_order_order_item_relationship_anomalies` | Monitors order–item coverage and item sequencing |
+| `dq_order_payment_relationship_anomalies` | Monitors order–payment coverage by order status |
+| `dq_order_value_reconciliation_anomalies` | Monitors differences between independently aggregated item and payment totals |
+| `dq_order_review_relationship_anomalies` | Monitors order–review coverage, cardinality, and review-identity consistency |
+| `dq_product_order_item_relationship_anomalies` | Monitors product coverage and repeated-product grouping assumptions |
+| `dq_seller_order_item_relationship_anomalies` | Monitors seller coverage and marketplace cardinalities |
+| `dq_geographic_relationship_anomalies` | Monitors geographic coverage, state consistency, and resolution ambiguity |
 
 Detection is implemented.
 
-Historical persistence, baseline evaluation, automated notification, and canonical disposition logic remain planned.
+Historical persistence, automated baseline evaluation, notification delivery, and canonical disposition logic remain planned.
 
 ---
 
@@ -212,6 +220,8 @@ The baselines below describe the validated Olist source snapshot. They are not a
 
 An unchanged approved baseline does not require repeated actionable notification. A new anomaly type, increase beyond the approved baseline, increased anomaly rate, or failure of a monitor to execute requires evaluation.
 
+This section deliberately records control governance rather than reproducing profiling queries or detailed evidence. See the [Olist relationship profile](../relationships/olist_relationship_profile.md) for the evidence supporting relationship baselines and canonical modelling decisions.
+
 ### 6.1 Order lifecycle anomalies
 
 Source relation:
@@ -233,24 +243,6 @@ staging.dq_orders_lifecycle_anomalies
 | `OLIST-ORDERS-LIFECYCLE-003` | `delivered_missing_approval` | 14 | Warning | Retain and flag; do not infer an approval timestamp |
 | `OLIST-ORDERS-LIFECYCLE-004` | `delivered_missing_carrier_delivery` | 2 | Warning | Retain and flag; exclude from calculations requiring carrier-delivery time |
 | `OLIST-ORDERS-LIFECYCLE-005` | `delivered_missing_customer_delivery` | 8 | Warning | Retain and flag; do not infer customer-delivery time from order status |
-
-#### Analytical impact
-
-These records remain valid for uses that do not require complete and ordered lifecycle timestamps, including:
-
-- order counts;
-- customer-order relationships;
-- order-item relationships;
-- payment reconciliation;
-- product and seller analysis.
-
-They are not automatically valid for:
-
-- approval-duration calculations;
-- dispatch-duration calculations;
-- carrier-delivery duration;
-- total delivery duration;
-- late-delivery analysis requiring actual delivery timestamps.
 
 #### Alert condition
 
@@ -288,22 +280,6 @@ staging.dq_products_anomalies
 | `OLIST-PRODUCTS-METADATA-001` | `missing_catalog_metadata` | 610 | Informational | Retain; preserve nullable attributes; use an explicit unknown category only in a downstream consumption contract |
 | `OLIST-PRODUCTS-MEASUREMENT-001` | `missing_physical_measurement` | 2 | Warning | Retain and flag; exclude from calculations requiring complete physical measurements |
 | `OLIST-PRODUCTS-WEIGHT-001` | `zero_product_weight` | 4 | Warning | Retain and flag; exclude from calculations requiring positive product weight |
-
-#### Analytical impact
-
-Products with incomplete metadata remain valid for:
-
-- order-item counts;
-- revenue and price analysis;
-- seller-product relationships;
-- product-identifier-level analysis.
-
-They may be unsuitable for:
-
-- category segmentation;
-- catalog completeness metrics;
-- weight-based logistics analysis;
-- volume or dimensional analysis.
 
 #### Alert condition
 
@@ -350,18 +326,6 @@ The zero-value payment baseline consists of:
 | `not_defined` | 3 |
 | `voucher` | 6 |
 
-#### Analytical impact
-
-Affected payment records remain valid source observations.
-
-They require care in:
-
-- payment-method analysis;
-- payment-sequence interpretation;
-- installment analysis;
-- order-value reconciliation;
-- revenue or collected-value calculations.
-
 #### Alert condition
 
 Notify when:
@@ -403,17 +367,6 @@ staging.dq_reviews_chronology_anomalies
 | Control ID | Anomaly type | Baseline | Severity | Disposition |
 |---|---|---:|---|---|
 | `OLIST-REVIEWS-CHRONOLOGY-001` | Answer timestamp before creation date | 0 | Warning | Retain and flag; exclude from response-time calculations |
-
-#### Analytical impact
-
-A future affected review may remain valid for:
-
-- review counts;
-- score analysis;
-- order-review relationships;
-- textual analysis.
-
-It would not be valid for response-time calculations requiring chronological consistency.
 
 #### Alert condition
 
@@ -457,22 +410,6 @@ Supporting baseline:
 | Observations in duplicated combinations | 390,005 |
 | Duplicate observations beyond the first | 261,831 |
 
-#### Analytical impact
-
-The staging table must not be joined directly into customer, seller, order, or canonical facts through ZIP prefix because:
-
-- ZIP prefix is not unique;
-- repeated observations are source-valid at staging grain;
-- direct joins would multiply business records;
-- coordinates may vary within a ZIP prefix.
-
-A downstream geographic preparation model must define:
-
-- its target grain;
-- coordinate-resolution or aggregation logic;
-- treatment of multiple cities or states associated with a ZIP prefix;
-- traceability to the source observations.
-
 #### Alert condition
 
 An unchanged approved duplicate profile does not require repeated notification.
@@ -512,33 +449,22 @@ staging.dq_customer_order_relationship_anomalies
 | `OLIST-CUSTOMER-ORDER-COVERAGE-002` | `customers_without_order` | 0 | Warning | Preserve and flag the customer record; exclude it only from analyses requiring an associated order. |
 | `OLIST-CUSTOMER-ORDER-CARDINALITY-001` | `customer_ids_with_multiple_orders` | 0 | Warning | Preserve and flag affected records; investigate whether source identity semantics have changed. |
 
-#### Analytics Impact
-
-The current zero baselines confirm that:
-
-- every staged order matches one staged customer record;
-- every staged customer record matches one staged order;
-- each customer_id is associated with exactly one order;
-- joining customers and orders through customer_id preserves order grain.
-
-The separate customer_unique_id represents persistent customer identity and may legitimately relate to multiple orders.
-
-#### Alert Condition
+#### Alert condition
 
 Any positive result must trigger notification because all three approved baselines are zero.
 
 Failure of the quality view to execute must produce an unknown quality state rather than a zero-anomaly result.
 
-Response
+#### Response
 
 The engineer must:
 
-- 1. inspect the affected customer and order records;
-- 2. compare the relationship keys with their Raw representations;
-- 3. determine whether the condition results from source behavior, incomplete ingestion, or transformation logic;
-- 4. identify customer-dependent canonical outputs that may be affected;
-- 5. apply the documented disposition without deleting or silently rewriting staging records;
-- 6. review the Olist identity contract if customer_id semantics have changed.
+1. inspect the affected customer and order records;
+2. compare the relationship keys with their Raw representations;
+3. determine whether the condition results from source behavior, incomplete ingestion, or transformation logic;
+4. identify customer-dependent canonical outputs that may be affected;
+5. apply the documented disposition without deleting or silently rewriting staging records;
+6. review the Olist identity contract if `customer_id` semantics have changed.
 
 Mercury must not silently create customer relationships, replace identifiers, or discard unmatched records.
 
@@ -569,29 +495,6 @@ staging.dq_order_order_item_relationship_anomalies
 | `OLIST-ORDER-ITEM-COVERAGE-006` | `delivered_orders_without_items` | 0 | Warning | Preserve and flag the order; exclude it from item-dependent outputs until investigated. |
 | `OLIST-ORDER-ITEM-SEQUENCE-001` | `orders_missing_item_id_one` | 0 | Warning | Preserve and flag affected items; do not renumber the source sequence. |
 | `OLIST-ORDER-ITEM-SEQUENCE-002` | `orders_with_non_contiguous_item_ids` | 0 | Warning | Preserve and flag affected items; do not invent missing sequence values. |
-
-#### Analytical impact
-
-The current relationship profile confirms that:
-
-- every staged order item matches a staged order;
-- order-item identifiers begin at one and remain contiguous within each order;
-- orders may legitimately contain multiple items;
-- joining orders to order items changes the result from order grain to order-item grain;
-- `created`, `canceled`, and `unavailable` orders may legitimately have no item records;
-- two invoiced orders and one shipped order have no Raw or staged item records despite having approved positive payments and reviews;
-- the shipped itemless order also contains a carrier-delivery timestamp.
-
-Orders without expected item records cannot support:
-
-- product attribution;
-- seller attribution;
-- item-price calculation;
-- freight calculation;
-- item-count calculation;
-- reconciliation between payment value and item-level order value.
-
-They may remain usable for order-level lifecycle, payment, customer, and review analysis when the missing item relationship is explicitly flagged.
 
 #### Alert condition
 
@@ -646,37 +549,6 @@ staging.dq_order_payment_relationship_anomalies
 | `OLIST-ORDER-PAYMENT-COVERAGE-004` | `processing_orders_without_payments` | 0 | Warning | Preserve and flag the order; exclude it from payment-dependent outputs until investigated. |
 | `OLIST-ORDER-PAYMENT-COVERAGE-005` | `shipped_orders_without_payments` | 0 | Warning | Preserve and flag the order; retain fulfilment evidence but prevent payment reconciliation. |
 | `OLIST-ORDER-PAYMENT-COVERAGE-006` | `delivered_orders_without_payments` | 1 | Warning | Preserve and flag the order; retain order and fulfilment evidence but prevent payment-dependent reconciliation. |
-
-#### Analytical impact
-
-The current relationship profile confirms that:
-
-- every staged payment matches a staged order;
-- one delivered order has no Raw or staged payment record;
-- the paymentless order contains three items;
-- its item price totals 134.97;
-- its freight value totals 8.49;
-- it has complete carrier and customer delivery timestamps;
-- it has one review with score one;
-- some orders legitimately contain multiple payment records.
-
-The paymentless delivered order may remain usable for:
-
-- order counts;
-- customer-order relationships;
-- order-item analysis;
-- product and seller analysis;
-- fulfilment analysis;
-- review analysis.
-
-It cannot support:
-
-- collected-payment analysis;
-- payment-method analysis;
-- payment reconciliation;
-- comparisons between payment value and item-based order value.
-
-Payment-sequence anomalies remain governed by `dq_payments_anomalies` and are not duplicated in this relationship view.
 
 #### Alert condition
 
@@ -742,41 +614,6 @@ A tolerance of 0.01 is applied before a difference is classified as an anomaly.
 | `OLIST-ORDER-VALUE-RECONCILIATION-001` | `payment_above_item_total` | 264 | Warning | Preserve both totals and flag the order; exclude it from analyses requiring exact item-to-payment reconciliation. |
 | `OLIST-ORDER-VALUE-RECONCILIATION-002` | `payment_below_item_total` | 39 | Warning | Preserve both totals and flag the order; exclude it from analyses requiring exact item-to-payment reconciliation. |
 
-#### Validated monetary impact
-
-| Anomaly type | Evaluated orders | Anomaly rate | Total absolute difference | Maximum absolute difference |
-|---|---:|---:|---:|---:|
-| `payment_above_item_total` | 98,665 | 0.2676% | 3,070.14 | 182.81 |
-| `payment_below_item_total` | 98,665 | 0.0395% | 199.08 | 51.62 |
-| Combined | 98,665 | 0.3071% | 3,269.22 | 182.81 |
-
-The cumulative absolute difference across all comparable orders is 3,271.95 when differences within the accepted 0.01 tolerance are included. The monitored anomaly impact of 3,269.22 includes only orders outside that tolerance.
-
-#### Analytical impact
-
-Reconciliation anomalies affect:
-
-- comparisons between collected payment and item-based order value;
-- payment completeness analysis;
-- order-value validation;
-- revenue definitions requiring exact agreement between the two concepts.
-
-Affected orders may remain valid for analyses that use one clearly identified measure independently.
-
-Mercury must preserve the distinction between:
-
-```text
-item-based order value
-```
-
-and:
-
-```text
-collected payment value
-```
-
-Neither value may be overwritten to force agreement.
-
 #### Alert condition
 
 Notify when:
@@ -818,7 +655,7 @@ The view detects relationship-coverage, review-cardinality, identity-consistency
 
 Detailed exploration evidence and canonical modelling implications are maintained in the [Olist relationship profile](../relationships/olist_relationship_profile.md).
 
-### Registered Controls
+#### Registered controls
 
 | Control ID | Anomaly or observation type | Baseline | Severity | Disposition |
 | --- | --- | ---: | --- | --- |
@@ -829,27 +666,7 @@ Detailed exploration evidence and canonical modelling implications are maintaine
 | `OLIST-ORDER-REVIEW-IDENTITY-002` | `reused_review_ids_across_customers` | 0 | Warning | Preserve and flag affected observations; prevent unreviewed use in customer-level feedback outputs |
 | `OLIST-ORDER-REVIEW-IDENTITY-003` | `reused_review_ids_across_purchase_dates` | 41 | Warning | Preserve all associations and flag cross-occasion review reuse for controlled downstream treatment |
 
-### Baseline Interpretation
-
-The zero-anomaly controls establish structural expectations:
-
-- every review should reference a known order;
-- one reused review_id should continue to represent one consistent review payload;
-- a reused review_id should not cross persistent-customer boundaries.
-
-Any non-zero result for these controls represents a change from the validated source baseline and requires investigation.
-
-The non-zero baselines describe known source behavior:
-
-- 646 delivered orders currently have no associated review;
-- 202 orders currently contain multiple distinct review scores;
-- 41 reused review IDs currently span different purchase dates.
-
-These conditions do not invalidate the staged orders or reviews.
-
-Multiple review scores may represent customer feedback changing over time. They MUST NOT be automatically averaged, overwritten, or treated as contradictory without a downstream semantic rule.
-
-### Initial Notification Behavior
+#### Initial notification behavior
 
 | Control ID | Initial notification condition | Initial response |
 | --- | --- | --- |
@@ -862,7 +679,7 @@ Multiple review scores may represent customer feedback changing over time. They 
 
 Exact automated thresholds and notification routing remain part of the future quality-observability implementation boundary defined by [ADR-013](../../../architecture/decisions/ADR-013-Data%20Quality%20Anomaly%20Disposition%20and%20Monitoring%20Contract.md).
 
-### Canonical publication requirements
+#### Canonical publication requirements
 
 Before canonical review outputs are published:
 
@@ -891,7 +708,7 @@ The view detects broken product references and monitors whether repeated product
 
 Detailed profiling evidence and canonical modelling implications are maintained in the [Olist relationship profile](../relationships/olist_relationship_profile.md).
 
-#### Registered Controls
+#### Registered controls
 
 | Control ID | Anomaly or observation type | Baseline | Severity | Disposition |
 | --- | --- | ---: | --- | --- |
@@ -903,19 +720,7 @@ Detailed profiling evidence and canonical modelling implications are maintained 
 | `OLIST-PRODUCT-ITEM-GRAIN-003` | `repeated_order_products_with_multiple_freight_values` | 0 | Informational | Preserve separate item rows and aggregate at a grain that includes freight value |
 | `OLIST-PRODUCT-ITEM-GRAIN-004` | `repeated_order_products_with_multiple_shipping_limits` | 0 | Informational | Preserve separate item rows and aggregate at a grain that includes the shipping limit |
 
-#### Baseline Interpretation
-
-The zero baseline for order_items_without_product establishes the structural expectation that every order item references a known product.
-
-A future non-zero count requires investigation before affected items can enter product-dependent canonical outputs.
-
-The zero baseline for products_without_order_items describes the current source extract rather than a universal platform requirement. A product catalogue may legitimately contain unsold products.
-
-The 7,088 repeated order-product combinations describe the current representation of product quantity. Their component item rows currently share the same seller, price, freight value, and shipping limit.
-
-The four grain-consistency controls protect this interpretation. A future non-zero result does not necessarily indicate invalid data. It indicates that (order_id, product_id) is no longer sufficiently precise for deriving a single quantity group.
-
-#### Initial Notification Behaviour
+#### Initial notification behavior
 
 | Control ID | Initial notification condition | Initial response |
 | --- | --- | --- |
@@ -929,7 +734,7 @@ The four grain-consistency controls protect this interpretation. A future non-ze
 
 Exact automated thresholds and notification routing remain part of the future quality-observability implementation boundary defined by [ADR-013](../../../architecture/decisions/ADR-013-Data%20Quality%20Anomaly%20Disposition%20and%20Monitoring%20Contract.md).
 
-#### Canonical Publication Requirements
+#### Canonical publication requirements
 
 Before product-dependent canonical outputs are published:
 
@@ -958,7 +763,7 @@ The view detects missing seller references and monitors the marketplace cardinal
 
 Detailed profiling evidence and canonical modelling implications are maintained in the [Olist relationship profile](../relationships/olist_relationship_profile.md).
 
-#### Registered Controls
+#### Registered controls
 
 | Control ID | Anomaly or observation type | Baseline | Severity | Disposition |
 | --- | --- | ---: | --- | --- |
@@ -969,24 +774,7 @@ Detailed profiling evidence and canonical modelling implications are maintained 
 | `OLIST-SELLER-ITEM-GRAIN-001` | `order_product_combinations_with_multiple_sellers` | 0 | Informational | Preserve seller-level item separation and use seller-aware quantity aggregation if the condition appears |
 
 
-#### Baseline Interpretation
-
-The zero baseline for order_items_without_seller establishes the structural expectation that every order item references a known seller.
-
-A future non-zero count requires investigation before affected records can enter seller-dependent canonical outputs.
-
-The zero baseline for sellers_without_order_items describes the current source extract rather than a universal marketplace requirement. A seller registry may legitimately include registered sellers that have not yet completed a sale.
-
-The non-zero baselines describe valid marketplace topology:
-
-- 1,278 item-bearing orders contain multiple sellers;
-- 1,225 products are associated with multiple sellers.
-
-These conditions MUST NOT be treated as duplicate or invalid records.
-
-The zero baseline for order_product_combinations_with_multiple_sellers supports the current product-quantity behavior. A future non-zero result would require seller-aware quantity grouping but would not automatically invalidate the affected items.
-
-#### Initial Notification Behaviour
+#### Initial notification behavior
 
 | Control ID | Initial notification condition | Initial response |
 | --- | --- | --- |
@@ -998,11 +786,11 @@ The zero baseline for order_product_combinations_with_multiple_sellers supports 
 
 Exact automated thresholds and notification routing remain part of the future quality-observability implementation boundary defined by [ADR-013](../../../architecture/decisions/ADR-013-Data%20Quality%20Anomaly%20Disposition%20and%20Monitoring%20Contract.md).
 
-#### Canonical Publication Requirements
+#### Canonical publication requirements
 
 Before seller-dependent canonical outputs are published:
 
-- every order item MUST reference a valid seller or be explicitly excluded from - seller-dependent outputs;
+- every order item MUST reference a valid seller or be explicitly excluded from seller-dependent outputs;
 - the seller dimension SHOULD preserve one row per seller_id;
 - the canonical order-item fact SHOULD preserve one row per (order_id, order_item_id);
 - both seller_id and product_id SHOULD remain on the order-item fact;
@@ -1027,7 +815,7 @@ staging.dq_geographic_relationship_anomalies
 
 The view detects incomplete ZIP-reference coverage, disagreement with the deterministically selected modal state, multi-state geolocation prefixes, and unused geographic reference coverage.
 
-Detailed profiling evidence and canonical modelling implication are maintained in the [Olist relationship profile](../relationships/olist_relationship_profile.md).
+Detailed profiling evidence and canonical modelling implications are maintained in the [Olist relationship profile](../relationships/olist_relationship_profile.md).
 
 #### Registered controls
 
@@ -1044,26 +832,7 @@ Detailed profiling evidence and canonical modelling implication are maintained i
 | `OLIST-GEO-REFERENCE-USAGE-001` | `geolocation_prefixes_without_customer_or_seller` | 4,099 | Informational | Retain unused geographic reference coverage without treating it as invalid |
 
 
-#### Baseline Interpretation
-
-The non-zero customer and seller coverage baselines describe incomplete reference coverage:
-
-- 278 customer records across 157 ZIP prefixes lack geolocation observation;
-- 7 seller records across 7 ZIP prefixes lack geolocation observations.
-
-These entities remain valid for analyses that do not require resolved coordinates.
-
-The zero customer-state disagreement baseline establishes that the modal geolocation state currently agrees with every covered customer record.
-
-The 35 seller-state disagreements are known source-address inconsistencies. The seller source state is preserved, while downstream geographic models may use a resolved ZIP-based state with an explicit mismatch flag.
-
-The eight multi-state prefixes each contain one isolated conflicting state observations and one clearly dominant state. These observations remain preserved in staging.
-
-No geolocation prefix currently has multiple states tied for the highest observation count. Any future non-zero result represents new resolution ambiguity and requires investigation before the affected resolved geography is used without review.
-
-The 4,099 unused geolocation prefixes are valid reference records and MUST NOT be quarantined or removed merely because they are not currently referenced by cutomers or sellers.
-
-#### Initial Notification Behaviour
+#### Initial notification behavior
 
 | Control ID | Initial notification condition | Initial response |
 | --- | --- | --- |
@@ -1077,7 +846,7 @@ The 4,099 unused geolocation prefixes are valid reference records and MUST NOT b
 | `OLIST-GEO-REFERENCE-USAGE-001` | Count materially deviates from the validated baseline | Confirm whether customer, seller, or geolocation reference coverage has changed |
 | `OLIST-GEO-REFERENCE-STATE-002` | Anomaly count becomes greater than zero | Investigate the tied state evidence and review the resolved geography before dependent publication |
 
-Exact automated thresholds and notification routing remain part of the future quality-observability implementation boundary defined by [ADR-013](../../../architecture/decisions/ADR-013-Data%20Quality%20Anomaly%20Disposition%20and%20Monitoring%20Contract.md)
+Exact automated thresholds and notification routing remain part of the future quality-observability implementation boundary defined by [ADR-013](../../../architecture/decisions/ADR-013-Data%20Quality%20Anomaly%20Disposition%20and%20Monitoring%20Contract.md).
 
 ```text
 Deterministically correct downstream
@@ -1094,7 +863,7 @@ This means:
 
 This rule does not authorise silent staging correction.
 
-#### Canonical Publication Requirements
+#### Canonical publication requirements
 
 Before geographic canonical outputs are published:
 
@@ -1188,7 +957,7 @@ Ownership refers to an operational role rather than an individual person.
 | Stable control identifiers | Defined in this document |
 | Canonical quality flags | Planned |
 | Geographic resolution model | Planned |
-| Relationship-quality controls | In progress — customer–order, order–order-item, order–payment, and order-value reconciliation controls implemented and validated |
+| Relationship-quality controls | Implemented and validated across all relationships in the Olist relationship profile |
 | Persistent quality-result history | Planned |
 | Baseline evaluation mechanism | Planned |
 | Automated engineer notification | Planned |
@@ -1199,24 +968,11 @@ A disposition marked as defined is not considered technically implemented until 
 
 ---
 
-## 11. Relationship Exploration Extension
+## 11. Register Maintenance
 
-Phase 3.6 will add cross-entity controls covering areas such as:
+Phase 3.6 relationship exploration is complete. Its profiling evidence and modelling implications are maintained in the [Olist relationship profile](../relationships/olist_relationship_profile.md); this register contains only the resulting controls and their operational treatment.
 
-- customer-to-order coverage;
-- order-to-order-item coverage;
-- order-to-payment coverage;
-- order-to-review coverage;
-- product-to-order-item coverage;
-- seller-to-order-item coverage;
-- orphaned child records;
-- parents without children;
-- unexpected cardinalities;
-- join amplification;
-- monetary reconciliation;
-- geographic enrichment compatibility.
-
-Every new relationship anomaly must be:
+Every new Olist anomaly or observation must be:
 
 1. assigned a stable control identifier;
 2. classified as blocking or non-blocking;
@@ -1226,6 +982,8 @@ Every new relationship anomaly must be:
 6. given a response playbook;
 7. given an explicit downstream disposition;
 8. added to this register before the affected canonical model is published.
+
+Profiling results that do not create a monitorable quality condition—such as expected join amplification from combining multiple one-to-many child relations—belong in the relationship profile and canonical design, not in this register.
 
 ---
 
