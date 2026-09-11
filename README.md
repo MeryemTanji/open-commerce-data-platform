@@ -95,6 +95,18 @@ Mercury follows a layered architecture with clear responsibilities between inges
       Reconciliation
 ```
 
+### Current BigQuery Implementation
+
+Mercury currently operates three governed BigQuery datasets:
+
+```text
+metadata   3 operational control-plane tables
+raw        8 immutable Olist source tables
+staging    8 standardised tables + 21 blocking assertions + 13 non-blocking quality views
+```
+
+The canonical model and downstream data-product relations are the next planned warehouse expansion. See [Mercury GCP Infrastructure](docs/infrastructure/gcp_infrastructure.md) for the implemented warehouse structure and ownership boundaries.
+
 Detailed architectural decisions are documented in [architecture/decisions/](architecture/decisions/).
 
 ## Platform Capabilities

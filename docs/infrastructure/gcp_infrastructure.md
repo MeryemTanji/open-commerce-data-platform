@@ -23,6 +23,7 @@ In particular:
 - ADR-010 defines replay, recovery, provenance, and reconciliation;
 - ADR-011 defines Mercury's security and least-privilege requirements;
 - ADR-012 defines the separation between Terraform-managed infrastructure and Dataform-managed analytical transformations.
+- ADR-013 defines anomaly disposition and monitoring requirements for the quality controls deployed within the analytical environment.
 
 This document should be updated when Mercury's deployed infrastructure materially changes.
 
@@ -202,6 +203,69 @@ Dataform
     ↓
 staging tables / views / assertions
 ```
+
+### 5.4 Current BigQuery Warehouse Structure
+
+The implemented development warehouse currently contains three datasets:
+
+```text
+BigQuery
+├── metadata   operational control plane
+├── raw        source-faithful warehouse layer
+└── staging    standardisation and quality boundary
+```
+
+#### metadata relations
+
+| Relation | Purpose |
+| --- | --- |
+| `historical_replay_state` | Durable source-level replay progress |
+| `raw_artifact_provenance` | Provenance for immutable Raw artifacts |
+| `warehouse_load_provenance` | Provenance for BigQuery Raw loads |
+
+#### raw relations
+
+The `raw` dataset contains eight Olist tables:
+
+```text
+customers
+geolocations
+order_items
+orders
+payments
+products
+reviews
+sellers
+```
+
+#### staging relations
+
+The `staging` dataset contains eight standardised tables:
+
+```text
+stg_customers
+stg_geolocations
+stg_order_items
+stg_orders
+stg_payments
+stg_products
+stg_reviews
+stg_sellers
+```
+
+Dataform also publishes 21 blocking assertion relations. These enforce the applicable key, required-value, format, domain, normalisation, cast-validity, and temporal-parseability contracts for the eight staging tables.
+
+Thirteen non-blocking quality views preserve valid staged data while surfacing source and relationship conditions:
+
+| Quality boundary | Views |
+| --- | --- |
+| Staging-source quality | `dq_orders_lifecycle_anomalies`, `dq_products_anomalies`, `dq_payments_anomalies`, `dq_reviews_chronology_anomalies`, `dq_geolocations_duplicate_observations` |
+| Relationship quality | `dq_customer_order_relationship_anomalies`, `dq_order_order_item_relationship_anomalies`, `dq_order_payment_relationship_anomalies`, `dq_order_value_reconciliation_anomalies`, `dq_order_review_relationship_anomalies`, `dq_product_order_item_relationship_anomalies`, `dq_seller_order_item_relationship_anomalies`, `dq_geographic_relationship_anomalies` |
+
+The assertions and quality views are controls rather than additional business-model layers. The canonical model and downstream data-product relations have not yet been provisioned.
+
+Detailed staging rules, anomaly treatments, and relationship evidence remain in their dedicated analytics documentation rather than being duplicated here.
+
 
 ## 6. Service Accounts
 
@@ -418,7 +482,7 @@ short-lived developer impersonation
 
 Validation confirmed that the identity cannot modify Raw, create arbitrary datasets, access Raw GCS, or access the BigQuery metadata control plane.
 
-The transformation infrastructure now supports the complete Olist staging and staging-quality graph. All eight staging models, their blocking assertions, and the non-blocking quality views have been executed successfully under the dedicated Dataform transformation identity.
+The transformation infrastructure now supports the complete Olist staging, staging-quality, and relationship-quality graph. All eight staging models, their blocking assertions, and the 13 non-blocking quality views have been executed successfully under the dedicated Dataform transformation identity.
 
 Broader Terraform adoption will continue incrementally as additional infrastructure enters active implementation scope.
 
@@ -437,11 +501,17 @@ Relevant ADRs:
 - ADR-010 — Historical Replay State and Recovery
 - ADR-011 — Data Security, Privacy, and Data-Leak Prevention
 - ADR-012 — Staging Layer Standardization and Semantic Contracts
+- ADR-013 — Data Quality Anomaly Disposition and Monitoring Contract
 
 Security implementation evidence:
 
-    docs/security/
+- [Security Documentation](../security/)
 
 Analytics-engineering implementation contract:
 
-    docs/analytics/staging/olist_staging_contracts.md
+- [Olist Staging Contracts](../../docs/analytics/staging/olist_staging_contracts.md)
+
+Olist quality and relationship documentation:
+
+- [Olist Anomaly Disposition Register](../analytics/staging/olist_anomaly_disposition.md)
+- [Olist Relationship Profile](../analytics/relationships/olist_relationship_profile.md)
