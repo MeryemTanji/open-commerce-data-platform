@@ -21,3 +21,20 @@ resource "google_service_account" "dataform" {
   display_name = "Mercury Dataform"
   description  = "Dedicated least-privilege service account for Mercury analytical transformations."
 }
+
+resource "google_bigquery_dataset" "canonical" {
+  project    = var.project_id
+  dataset_id = "canonical"
+  location   = var.region
+
+  description = "Mercury canonical business model managed by Dataform."
+
+  delete_contents_on_destroy = false
+
+  labels = {
+    platform    = "mercury"
+    environment = "dev"
+    layer       = "canonical"
+    managed_by  = "terraform"
+  }
+}

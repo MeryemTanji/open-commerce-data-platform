@@ -23,3 +23,10 @@ resource "google_service_account_iam_member" "dataform_developer_token_creator" 
   role               = "roles/iam.serviceAccountTokenCreator"
   member             = var.dataform_impersonator_member
 }
+
+resource "google_bigquery_dataset_iam_member" "dataform_canonical_editor" {
+  project    = var.project_id
+  dataset_id = google_bigquery_dataset.canonical.dataset_id
+  role       = "roles/bigquery.dataEditor"
+  member     = "serviceAccount:${google_service_account.dataform.email}"
+}
