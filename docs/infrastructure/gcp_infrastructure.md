@@ -22,7 +22,7 @@ In particular:
 - ADR-008 defines the BigQuery Raw loading architecture;
 - ADR-010 defines replay, recovery, provenance, and reconciliation;
 - ADR-011 defines Mercury's security and least-privilege requirements;
-- ADR-012 defines the separation between Terraform-managed infrastructure and Dataform-managed analytical transformations.
+- ADR-012 defines the separation between Terraform-managed infrastructure and Dataform-managed analytical transformations;
 - ADR-013 defines anomaly disposition and monitoring requirements for the quality controls deployed within the analytical environment.
 
 This document should be updated when Mercury's deployed infrastructure materially changes.
@@ -111,13 +111,14 @@ Security validation of the bucket is documented under:
 
 ## 5. BigQuery
 
-Mercury currently uses three main BigQuery datasets.
+Mercury currently uses four main BigQuery datasets.
 
 ```text
 BigQuery
 ├── raw
 ├── metadata
-└── staging
+├── staging
+└── canonical
 ```
 
 ### 5.1 raw
@@ -204,15 +205,47 @@ Dataform
 staging tables / views / assertions
 ```
 
-### 5.4 Current BigQuery Warehouse Structure
+### 5.4 canonical
 
-The implemented development warehouse currently contains three datasets:
+Purpose:
+
+    reusable business-oriented analytical representation
+
+Current configuration:
+
+    project     = mercury-data-platform-dev
+    dataset     = canonical
+    location    = europe-west4
+    managed_by  = terraform
+
+Terraform provisions and owns the dataset boundary. Dataform is authorised to create and manage analytical relations inside it through the dedicated transformation identity.
+
+```text
+Terraform
+    ↓
+canonical dataset
+
+Dataform
+    ↓
+canonical dimensions / facts / bridges / controls
+```
+
+The Dataform identity has dataset-scoped `roles/bigquery.dataEditor` access to `canonical`. It does not have permission to create or administer BigQuery datasets.
+
+Relation creation, reading, and cleanup inside the dataset have been validated under the Dataform identity.
+
+The dataset currently contains no canonical business relations. Their grains, relationships, anomaly treatments, and publication controls will be defined during Phase 3.7 before implementation.
+
+### 5.5 Current BigQuery Warehouse Structure
+
+The implemented development warehouse currently contains four datasets:
 
 ```text
 BigQuery
 ├── metadata   operational control plane
 ├── raw        source-faithful warehouse layer
-└── staging    standardisation and quality boundary
+├── staging    standardisation and quality boundary
+└── canonical  provisioned business-model boundary
 ```
 
 #### metadata relations
@@ -262,7 +295,7 @@ Thirteen non-blocking quality views preserve valid staged data while surfacing s
 | Staging-source quality | `dq_orders_lifecycle_anomalies`, `dq_products_anomalies`, `dq_payments_anomalies`, `dq_reviews_chronology_anomalies`, `dq_geolocations_duplicate_observations` |
 | Relationship quality | `dq_customer_order_relationship_anomalies`, `dq_order_order_item_relationship_anomalies`, `dq_order_payment_relationship_anomalies`, `dq_order_value_reconciliation_anomalies`, `dq_order_review_relationship_anomalies`, `dq_product_order_item_relationship_anomalies`, `dq_seller_order_item_relationship_anomalies`, `dq_geographic_relationship_anomalies` |
 
-The assertions and quality views are controls rather than additional business-model layers. The canonical model and downstream data-product relations have not yet been provisioned.
+The assertions and quality views are controls rather than additional business-model layers. The `canonical` dataset is provisioned, but its dimensions, facts, bridges, and canonical controls have not yet been implemented. Downstream data-product relations also remain planned.
 
 Detailed staging rules, anomaly treatments, and relationship evidence remain in their dedicated analytics documentation rather than being duplicated here.
 
@@ -304,6 +337,7 @@ The deployed permission boundary is:
 | Project `mercury-data-platform-dev` | `roles/bigquery.jobUser`    | Execute BigQuery jobs    |
 | BigQuery dataset `raw`              | `roles/bigquery.dataViewer` | Read Raw tables and data |
 | BigQuery dataset `staging`          | `roles/bigquery.dataEditor` | Manage staging relations |
+| BigQuery dataset `canonical` | `roles/bigquery.dataEditor` | Manage canonical relations |
 
 The approved developer identity may impersonate mercury-dataform through a service-account-scoped roles/iam.serviceAccountTokenCreator grant. Local Dataform execution therefore uses short-lived impersonated credentials rather than a service-account key.
 
@@ -344,7 +378,9 @@ The current Terraform implementation manages:
 - the dedicated Dataform transformation service account;
 - the Dataform identity’s project-level BigQuery job role;
 - dataset-scoped access to `raw` and `staging`;
-- service-account-scoped developer impersonation for local validation.
+- service-account-scoped developer impersonation for local validation;
+- the BigQuery `canonical` dataset;
+- dataset-scoped Dataform relation management inside `canonical`;
 
 Mercury is adopting Terraform incrementally rather than attempting to migrate all existing infrastructure into Infrastructure as Code at once.
 
@@ -417,7 +453,7 @@ Its responsibility includes:
 - semantic casting;
 - normalisation;
 - staging assertions;
-- future canonical transformations;
+- canonical transformations inside approved infrastructure;
 - future downstream analytical models.
 
 Dataform is not Mercury's infrastructure-provisioning authority.
@@ -452,7 +488,8 @@ mercury-data-platform-dev
         ├── BigQuery
         │   ├── raw
         │   ├── metadata
-        │   └── staging
+        │   ├── staging
+        │   └── canonical
         │
         ├── Service Accounts
         │   ├── mercury-runtime
@@ -460,6 +497,7 @@ mercury-data-platform-dev
         │
         └── Terraform
             ├── staging dataset
+            ├── canonical dataset
             ├── Dataform service account
             └── Dataform IAM boundary
 ```
@@ -477,12 +515,16 @@ Raw read-only access
         +
 Staging read/write access
         +
+Canonical read/write access
+        +
 short-lived developer impersonation
 ```
 
 Validation confirmed that the identity cannot modify Raw, create arbitrary datasets, access Raw GCS, or access the BigQuery metadata control plane.
 
 The transformation infrastructure now supports the complete Olist staging, staging-quality, and relationship-quality graph. All eight staging models, their blocking assertions, and the 13 non-blocking quality views have been executed successfully under the dedicated Dataform transformation identity.
+
+The Terraform-managed `canonical` dataset and its dataset-scoped Dataform access boundary are also implemented and validated. Dataform can manage relations inside the dataset but cannot create or administer dataset infrastructure. No canonical business relations have yet been published.
 
 Broader Terraform adoption will continue incrementally as additional infrastructure enters active implementation scope.
 
@@ -509,7 +551,7 @@ Security implementation evidence:
 
 Analytics-engineering implementation contract:
 
-- [Olist Staging Contracts](../../docs/analytics/staging/olist_staging_contracts.md)
+- [Olist Staging Contracts](../analytics/staging/olist_staging_contracts.md)
 
 Olist quality and relationship documentation:
 

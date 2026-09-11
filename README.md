@@ -103,9 +103,10 @@ Mercury currently operates three governed BigQuery datasets:
 metadata   3 operational control-plane tables
 raw        8 immutable Olist source tables
 staging    8 standardised tables + 21 blocking assertions + 13 non-blocking quality views
+canonical   provisioned transformation boundary; business relations not yet implemented
 ```
 
-The canonical model and downstream data-product relations are the next planned warehouse expansion. See [Mercury GCP Infrastructure](docs/infrastructure/gcp_infrastructure.md) for the implemented warehouse structure and ownership boundaries.
+The Terraform-managed canonical dataset and its least-privilege Dataform access boundary are provisioned and validated. Canonical business relations are the current warehouse implementation focus. See [Mercury GCP Infrastructure](docs/infrastructure/gcp_infrastructure.md) for the implemented warehouse structure and ownership boundaries.
 
 Detailed architectural decisions are documented in [architecture/decisions/](architecture/decisions/).
 
@@ -289,7 +290,7 @@ The anomaly-disposition and monitoring contract has been defined, with Olist con
 
 Relationship exploration across the staged Olist entities is complete. The validated findings document referential coverage, cardinalities, identity behavior, monetary reconciliation, geographic-resolution requirements, and the safeguards needed to prevent join amplification.
 
-Current work is moving into canonical model design. This phase will translate the staging contracts, anomaly dispositions, and relationship findings into reusable business entities with explicit grains, governed relationships, and publication controls.
+Current work has entered canonical model design. The Terraform-managed canonical dataset and its least-privilege Dataform access boundary are provisioned and validated. This phase will translate the staging contracts, anomaly dispositions, and relationship findings into reusable business entities with explicit grains, governed relationships, and publication controls.
 
 Operational implementation of quality history, baseline evaluation, and automated alerting is planned as part of **Phase 4 — Production Platform**.
 

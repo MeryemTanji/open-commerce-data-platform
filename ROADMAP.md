@@ -288,9 +288,17 @@ Before implementing the canonical model:
 
 #### 3.7 Canonical Business Model
 
-**Status**: [ ] Planned
+**Status**: [wip] In Progress
 
 Implement Mercury's reusable business-oriented model above staging.
+
+##### Foundation
+
+- [x] Provision the Terraform-managed `canonical` BigQuery dataset
+- [x] Grant the Dataform transformation identity dataset-scoped relation management
+- [x] Validate canonical relation creation, reading, and cleanup under the Dataform identity
+- [ ] Document the canonical model architecture
+- [ ] Define source-specific canonical implementation contracts
 
 Expected model direction includes:
 
@@ -309,7 +317,20 @@ Expected model direction includes:
 - [ ] Payments
 - [ ] Reviews
 
-Final model grain, relationships, and naming should be confirmed from staged-data exploration rather than assumed from the Raw source structure.
+##### Bridges
+
+- [ ] Order–Review
+
+##### Quality and Publication Safeguards
+
+- [ ] Implement canonical grain and key assertions
+- [ ] Implement referential-integrity controls
+- [ ] Apply approved anomaly dispositions
+- [ ] Prevent join amplification across one-to-many relationships
+- [ ] Reconcile canonical measures with validated staging totals
+- [ ] Validate the complete canonical Dataform graph
+
+Final model grain, relationships, and naming must follow the validated relationship profile rather than being assumed from the Raw source structure.
 
 #### Phase 3 Exit Criteria
 
