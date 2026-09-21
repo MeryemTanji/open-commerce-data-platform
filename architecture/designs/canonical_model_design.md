@@ -14,7 +14,7 @@ This document defines the logical and implementation design for Mercury's canoni
 
 The canonical layer transforms validated staging relations into stable, reusable business entities that are independent of individual source-system schemas. It provides the governed foundation from which downstream data products, analytical models, dashboards, and applications can be built.
 
-This design translates Mercury's architectural decisions, staging contracts, anomaly dispositions, and relationship findings into explicit canonical model boundaries.
+This design translates Mercury's architectural decisions into platform-wide canonical modelling, implementation, and publication requirements. Source-specific canonical contracts apply these requirements to individual source systems.
 
 ## Governing Decisions
 
@@ -27,7 +27,7 @@ This design implements the following architectural decisions:
 - [ADR-012: Staging Layer Standardization and Semantic Contracts](../decisions/ADR-012-Staging%20Layer%20Standardization%20and%20Semantic%20Contracts.md)
 - [ADR-013: Data Quality Anomaly Disposition and Monitoring Contract](../decisions/ADR-013-Data%20Quality%20Anomaly%20Disposition%20and%20Monitoring%20Contract.md)
 
-The first implementation is informed by the validated [Olist Relationship Profile](../../docs/analytics/relationships/olist_relationship_profile.md) and [Olist Anomaly Disposition Register](../../docs/analytics/staging/olist_anomaly_disposition.md).
+Source-specific implementation contracts must reference the applicable staging contracts, relationship findings, and anomaly-disposition registers.
 
 ## 1. Scope
 
@@ -36,19 +36,22 @@ This document defines:
 - the responsibility and boundary of the canonical layer;
 - the canonical dataset ownership model;
 - permitted canonical relation types;
-- model grains, keys, and relationships;
+- platform-wide grain, key, and relationship requirements;
 - source-to-canonical dependency rules;
 - identity-resolution requirements;
-- anomaly-disposition implementation;
+- anomaly-disposition implementation requirements;
 - join-amplification safeguards;
+- temporal modelling requirements;
 - canonical quality and publication controls;
 - Dataform dependency and execution requirements;
-- the initial Olist canonical model direction.
+- requirements for source-specific canonical implementation contracts.
 
 This document does not define:
 
 - Raw or staging transformation contracts;
-- source-specific profiling evidence;
+- source-specific canonical model inventories;
+- source-specific column, grain, or key registries;
+- source-specific profiling evidence or anomaly baselines;
 - operational quality-history infrastructure;
 - notification delivery channels;
 - dashboard-specific models;
@@ -138,7 +141,7 @@ Dataform manages:
 - canonical dimensions;
 - canonical facts;
 - canonical bridges;
-- approved preparation relations;
+- approved intermediate relations;
 - canonical assertions;
 - non-blocking canonical quality views where required.
 
@@ -160,15 +163,15 @@ No join may be introduced unless its effect on the relation's grain is understoo
 
 ### 5.2 Preserve distinct business processes
 
-Orders, order items, payments, and reviews represent different business processes and must remain independently modelled at their natural grains.
+Distinct business processes must remain independently modelled at their natural grains.
 
-They must not be joined into one detailed relation merely because they share `order_id`.
+For example, orders, order items, payments, and reviews must not be joined into one detailed relation merely because they share an order identifier.
 
 ### 5.3 Aggregate independently before combining
 
 When multiple one-to-many child relations contribute measures to a parent-grain model, each child must first be aggregated independently to the parent key.
 
-This prevents multiplication of item, payment, and review measures.
+This prevents multiplication of measures across independent business processes.
 
 ### 5.4 Separate entities from associations
 
@@ -235,89 +238,9 @@ Intermediate relations are implementation dependencies rather than consumer-faci
 
 Quality views and assertions govern publication but are not themselves canonical business entities.
 
-## 7. Initial Canonical Model Inventory
+## 7. Canonical Key Strategy
 
-The first canonical implementation uses the validated Olist staging relations while expressing source-independent business concepts.
-
-### 7.1 Dimensions
-
-| Relation | Grain | Business responsibility | Primary staging input |
-| --- | --- | --- | --- |
-| `dim_customer` | One row per `customer_unique_id` | Represents persistent customer identity independently of order-specific customer records | `stg_customers` |
-| `dim_product` | One row per `product_id` | Represents reusable product and catalogue attributes | `stg_products` |
-| `dim_seller` | One row per `seller_id` | Represents sellers and their governed geographic attributes | `stg_sellers` |
-| `dim_date` | One row per calendar date | Provides reusable calendar attributes and role-playing date relationships | Generated from canonical date boundaries |
-| `dim_location` | One row per ZIP-code prefix | Provides deterministically resolved geographic attributes | `stg_geolocations` |
-
-### 7.2 Facts
-
-| Relation | Grain | Business responsibility | Primary staging input |
-| --- | --- | --- | --- |
-| `fct_orders` | One row per `order_id` | Represents the order lifecycle and independently aggregated order-level measures | `stg_orders` |
-| `fct_order_items` | One row per `(order_id, order_item_id)` | Represents individual product–seller line items and their commercial values | `stg_order_items` |
-| `fct_payments` | One row per `(order_id, payment_sequential)` | Represents individual payment events associated with an order | `stg_payments` |
-| `fct_reviews` | One row per `review_id` | Represents distinct review payloads and feedback chronology | `stg_reviews` |
-
-### 7.3 Bridges
-
-| Relation | Grain | Business responsibility | Primary staging input |
-| --- | --- | --- | --- |
-| `bridge_order_reviews` | One row per `(order_id, review_id)` | Preserves every validated association between orders and reviews | `stg_reviews` |
-
-### 7.4 Intermediate Relations
-
-The initial implementation is expected to require the following internal relations:
-
-| Relation | Grain | Responsibility |
-| --- | --- | --- |
-| `int_geolocation_resolution` | One row per ZIP-code prefix | Resolves repeated geolocation observations into governed location attributes |
-| `int_order_item_summary` | One row per `order_id` | Aggregates item counts and monetary measures before joining to order grain |
-| `int_order_payment_summary` | One row per `order_id` | Aggregates payment counts and values before joining to order grain |
-| `int_order_review_summary` | One row per `order_id` | Aggregates review-association counts without selecting an arbitrary review |
-
-Intermediate relation names may be refined during their individual implementation contracts, but their declared grains and responsibilities must remain explicit.
-
-## 8. Initial Relationship Structure
-
-The initial canonical relationships are:
-
-| Parent relation | Child or associated relation | Relationship |
-| --- | --- | --- |
-| `dim_customer` | `fct_orders` | One persistent customer to zero or more orders |
-| `dim_location` | `fct_orders` | One resolved location to zero or more order-context customer addresses |
-| `dim_product` | `fct_order_items` | One product to zero or more order items |
-| `dim_seller` | `fct_order_items` | One seller to zero or more order items |
-| `fct_orders` | `fct_order_items` | One order to zero or more order items |
-| `fct_orders` | `fct_payments` | One order to zero or more payment events |
-| `fct_orders` | `bridge_order_reviews` | One order to zero or more review associations |
-| `fct_reviews` | `bridge_order_reviews` | One review to one or more order associations |
-| `dim_date` | Canonical facts | One calendar date to zero or more fact events through role-specific date keys |
-
-Canonical relationships do not imply that all relations may be joined simultaneously at their detailed grains.
-
-Order items, payments, and review associations are independent one-to-many relationships from orders. Any order-grain model that uses their measures must aggregate each relation independently to `order_id` before combining them.
-
-## 9. Excluded Initial Relations
-
-The initial canonical model will not create a separate delivery fact.
-
-The available delivery attributes describe the lifecycle of an order but do not establish an independently identified delivery entity or a validated one-to-many delivery grain. Delivery timestamps and derived durations therefore remain part of `fct_orders`.
-
-A separate delivery relation may be introduced later if Mercury integrates a fulfilment source containing independently identified shipments, delivery attempts, carriers, or packages.
-
-The initial model will also not create:
-
-- a single denormalised order-wide table containing detailed items, payments, and reviews;
-- a permanent seller attribute on `dim_product`;
-- a single current-location attribute selected arbitrarily for `dim_customer`;
-- dashboard-specific aggregates;
-- customer-scoring or machine-learning feature tables.
-
-Those structures either violate validated relationship behavior or belong in downstream data products.
-
-## 10. Canonical Key Strategy
-
-### 10.1 Canonical and source keys
+### 7.1 Canonical and source keys
 
 Canonical relations must distinguish between:
 
@@ -336,7 +259,7 @@ Every source-derived canonical entity must retain:
 - its source namespace;
 - the source identifier or identifiers from which the canonical key was derived.
 
-### 10.2 Deterministic generation
+### 7.2 Deterministic generation
 
 Source-derived canonical keys must be deterministic.
 
@@ -352,7 +275,7 @@ source namespace
 source identifier components
 ```
 
-The initial implementation will generate a hexadecimal SHA-256 value from a consistently serialized representation of those components.
+Mercury generates a hexadecimal SHA-256 value from a consistently serialized representation of those components.
 
 Conceptually:
 
@@ -376,7 +299,7 @@ v1
 
 Changing the serialization method, component order, namespace, or key version constitutes a canonical contract change and must be reviewed explicitly.
 
-### 10.3 Generation requirements
+### 7.3 Generation requirements
 
 Canonical key generation must:
 
@@ -400,27 +323,23 @@ Canonical key generation must not:
 
 A hashed customer identifier may still represent personal or linkable data and remains governed by Mercury's security and privacy controls.
 
-### 10.4 Non-source-derived keys
+### 7.4 Source namespaces
+
+Every source instance contributing source-derived entities to the canonical layer must receive a stable lowercase namespace.
+
+Reusing a namespace for a materially different source instance is prohibited because it could cause unrelated source identifiers to generate identical canonical keys.
+
+Cross-source identity resolution must be implemented through an explicit governed mapping process. It must not be achieved by assigning different systems the same namespace or by assuming matching source identifiers represent the same business entity.
+
+### 7.5 Non-source-derived keys
 
 Not every canonical key requires a source namespace.
 
 Governed reference entities may use stable business-domain keys when their identity is independent of a source system.
 
-The initial exceptions are:
+Each source-specific canonical contract must identify these exceptions and document their key components, normalization rules, and collision controls.
 
-| Relation | Stable key |
-| --- | --- |
-| `dim_date` | Calendar date |
-| `dim_location` | Country code and postal-code prefix |
-
-A Brazilian ZIP-code prefix is not globally unique without geographic context. The location key must therefore include:
-
-```text
-country_code
-postal_code_prefix
-```
-
-### 10.5 Collision and consistency controls
+### 7.6 Collision and consistency controls
 
 Every relation using generated canonical keys must enforce:
 
@@ -432,76 +351,212 @@ Every relation using generated canonical keys must enforce:
 
 A uniqueness assertion remains required even when SHA-256 collision probability is negligible. The assertion also detects incorrect input composition, serialization defects, and unintended grain changes.
 
-## 11. Canonical Key Registry
+## 8. Temporal Modelling Requirements
 
-### 11.1 Primary keys
+### 8.1 Date dimension
 
-| Relation | Primary key | Generation basis |
-| --- | --- | --- |
-| `dim_customer` | `customer_key` | `v1`, customer entity, source namespace, `customer_unique_id` |
-| `dim_product` | `product_key` | `v1`, product entity, source namespace, `product_id` |
-| `dim_seller` | `seller_key` | `v1`, seller entity, source namespace, `seller_id` |
-| `dim_date` | `date_key` | Calendar date |
-| `dim_location` | `location_key` | `v1`, location entity, country code, postal-code prefix |
-| `fct_orders` | `order_key` | `v1`, order entity, source namespace, `order_id` |
-| `fct_order_items` | `order_item_key` | `v1`, order-item entity, source namespace, `order_id`, `order_item_id` |
-| `fct_payments` | `payment_key` | `v1`, payment entity, source namespace, `order_id`, `payment_sequential` |
-| `fct_reviews` | `review_key` | `v1`, review entity, source namespace, `review_id` |
-| `bridge_order_reviews` | (`order_key`, `review_key`) | Canonical order and review keys |
+Canonical implementations must provide a governed date dimension when facts expose reusable calendar relationships.
 
-The bridge uses (`order_key`, `review_key`) as its composite primary key and does not require a generated surrogate key.
+The date dimension must:
 
-### 11.2 Preserved source identifiers
+- declare one stable calendar grain;
+- provide continuous coverage across the required canonical range;
+- derive calendar attributes deterministically;
+- support role-playing relationships from multiple business events;
+- use a stable natural or governed canonical key;
+- include blocking uniqueness and coverage controls.
 
-| Relation | Preserved source identifiers |
-| --- | --- |
-| `dim_customer` | `source_customer_id` |
-| `dim_product` | `source_product_id` |
-| `dim_seller` | `source_seller_id` |
-| `dim_date` | Not applicable |
-| `dim_location` | `source_postal_code_prefix` |
-| `fct_orders` | `source_order_id`, `source_customer_record_id` |
-| `fct_order_items` | `source_order_id`, `source_order_item_id` |
-| `fct_payments` | `source_order_id`, `source_payment_sequence` |
-| `fct_reviews` | `source_review_id` |
-| `bridge_order_reviews` | `source_order_id`, `source_review_id` |
+### 8.2 Dates and timestamps
 
-### 11.3 Foreign-key propagation
+Canonical facts must preserve timestamps when time-of-day precision is meaningful.
 
-Canonical foreign keys must be generated or obtained through the same governed key logic as their parent relation.
+Date keys supplement rather than replace timestamps. They support calendar filtering and aggregation but must not be used for elapsed-time calculations that require timestamp precision.
 
-The initial foreign-key relationships are:
+Source fields governed as calendar dates must not be converted into artificial midnight timestamps merely to conform to a timestamp representation.
 
-| Child relation | Foreign key | Parent relation |
-| --- | --- | --- |
-| `fct_orders` | `customer_key` | `dim_customer` |
-| `fct_orders` | `customer_location_key` | `dim_location` |
-| `fct_orders` | Role-specific lifecycle date keys | `dim_date` |
-| `fct_order_items` | `order_key` | `fct_orders` |
-| `fct_order_items` | `product_key` | `dim_product` |
-| `fct_order_items` | `seller_key` | `dim_seller` |
-| `fct_order_items` | `shipping_limit_date_key` | `dim_date` |
-| `fct_payments` | `order_key` | `fct_orders` |
-| `fct_reviews` | `review_creation_date_key` | `dim_date` |
-| `fct_reviews` | `review_answer_date_key` | `dim_date` |
-| `bridge_order_reviews` | `order_key` | `fct_orders` |
-| `bridge_order_reviews` | `review_key` | `fct_reviews` |
-| `dim_seller` | `location_key` | `dim_location` |
+### 8.3 Timezone conventions
 
-Order lifecycle dates and timestamps will use role-specific date keys referencing `dim_date`. Their exact column contracts will be defined with `fct_orders`.
+Every source-specific canonical contract must declare the timezone or date-extraction convention used to derive calendar dates from timestamps.
 
-Timestamps remain available on their facts when time-of-day precision is analytically relevant. A date key supplements rather than replaces its corresponding timestamp.
+Mercury must not infer timezone semantics from geography or apply unsupported timezone corrections.
 
-### 11.4 Source namespace
+A change to an approved timezone or date-extraction convention constitutes a canonical contract change and requires impact assessment.
 
-The first implementation uses:
+### 8.4 Role-playing dates and durations
+
+Multiple business-event dates may reference the same physical date dimension through role-specific foreign keys.
+
+Each role must retain its own business meaning. One event date must not be substituted for another merely because the preferred value is absent.
+
+Durations must be calculated from the most precise governed temporal values available. A duration must remain null when a required endpoint is unavailable unless an approved contract defines another treatment.
+
+Mercury must not reorder temporal endpoints, apply absolute values to conceal negative durations, or fabricate missing lifecycle events.
+
+### 8.5 Source-specific temporal contracts
+
+Every source-specific canonical contract must declare:
+
+- the temporal fields contributing to the calendar range;
+- the date roles exposed by each fact;
+- nullability requirements;
+- the timezone or date-extraction convention;
+- treatment of missing or anomalous temporal values;
+- required referential and chronology controls.
+
+## 9. Source-Specific Canonical Contracts
+
+Every source implementation must maintain source-specific canonical documentation outside this platform-wide design.
+
+At minimum, the source-specific documentation must define:
+
+- the canonical model inventory;
+- relation grains and source dependencies;
+- the canonical key registry;
+- identity and resolution rules;
+- dimension contracts;
+- fact and bridge contracts;
+- anomaly-disposition implementation;
+- reconciliation and join-amplification safeguards;
+- publication controls;
+- execution dependencies and completion criteria.
+
+Source-specific contracts must reference their staging contracts, relationship profiles, and anomaly-disposition registers rather than duplicate detailed profiling evidence.
+
+The initial implementation is documented in:
+
+- [Olist Canonical Model Overview](../../docs/analytics/canonical/olist/olist_canonical_model_overview.md);
+- [Olist Dimension Contracts](../../docs/analytics/canonical/olist/olist_dimension_contracts.md).
+
+Olist fact and publication contracts will be added alongside these documents as their designs are completed.
+
+## 10. Canonical Publication Requirements
+
+### 10.1 Relation contracts
+
+Every published canonical relation must document:
+
+- its business responsibility;
+- its declared grain;
+- its primary key;
+- its source dependencies;
+- its canonical parent and child relationships;
+- required and nullable attributes;
+- accepted domains where applicable;
+- source identifiers retained for traceability;
+- anomaly dispositions affecting publication;
+- blocking and non-blocking controls.
+
+### 10.2 Blocking controls
+
+Blocking controls protect structural integrity and publication safety.
+
+They must cover, where applicable:
+
+- primary-key uniqueness and non-nullability;
+- required attribute availability;
+- deterministic key consistency;
+- accepted structural domains;
+- referential compatibility;
+- expected row-count preservation;
+- absence of unintended join amplification;
+- reconciliation of governed additive measures.
+
+A failed blocking control prevents dependent canonical publication.
+
+### 10.3 Non-blocking observations
+
+Source anomalies that do not violate the structural canonical contract may remain non-blocking only when they have an approved disposition.
+
+The canonical implementation must preserve the affected source evidence and expose any flag, status, resolved value, or conditional-exclusion behavior required by that disposition.
+
+Non-blocking does not mean unmonitored. Applicable controls remain subject to the historical recording, baseline evaluation, ownership, and response requirements defined by ADR-013.
+
+### 10.4 Reconciliation and amplification
+
+Measures from independent one-to-many relationships must be reconciled and aggregated at their own governed grains before they are combined.
+
+Canonical implementations must validate that:
+
+- joins preserve the intended relation grain;
+- parent rows are not multiplied by child relationships;
+- additive measures remain attributable to their originating process;
+- independent source measures are not overwritten merely to force agreement;
+- material reconciliation differences remain visible and governed.
+
+### 10.5 Publishability
+
+A canonical relation is publishable only when:
+
+- its implementation matches its documented contract;
+- all blocking dependencies completed successfully;
+- its blocking controls pass;
+- required non-blocking conditions are exposed as documented;
+- source traceability is preserved;
+- no unreviewed grain change or join amplification is present.
+
+## 11. Dataform Dependency and Execution Requirements
+
+### 11.1 Dependency declaration
+
+Canonical SQLX actions must use Dataform references for managed relation dependencies.
+
+Dependencies must reflect the documented model graph. Canonical actions must not bypass governed staging or intermediate relations by reading equivalent Raw relations directly.
+
+### 11.2 Execution order
+
+The canonical graph must establish an explicit dependency order equivalent to:
 
 ```text
-source_namespace = "olist"
+validated staging relations
+        ↓
+approved intermediate resolutions and summaries
+        ↓
+canonical dimensions and parent facts
+        ↓
+dependent facts and bridges
+        ↓
+canonical quality controls
 ```
 
-The source namespace identifies the Olist source instance represented by the current development data.
+The exact graph remains source-specific, but no relation may depend on a downstream consumer or create a circular dependency.
 
-A future source must receive its own stable namespace. Reusing a namespace for a materially different source instance is prohibited because it could cause unrelated source identifiers to generate identical canonical keys.
+### 11.3 Intermediate relations
 
-Cross-source identity resolution must be implemented through an explicit governed mapping process. It must not be achieved by assigning different systems the same namespace or by assuming matching source identifiers represent the same business entity.
+An intermediate relation may be introduced only when it provides reusable preparation required by one or more canonical models.
+
+Every intermediate relation must declare:
+
+- its grain;
+- its purpose;
+- its source dependencies;
+- whether it performs resolution, deduplication, or aggregation;
+- the canonical relations that consume it;
+- controls preventing unintended row or measure changes.
+
+Intermediate relations are not consumer-facing substitutes for documented canonical entities.
+
+### 11.4 Materialization and naming
+
+Dimensions, facts, and bridges must be materialized according to their documented refresh and consumption requirements.
+
+Relation names must use the prefixes defined in this design. Source-specific physical-design choices such as partitioning, clustering, incremental processing, and full-refresh behavior must be recorded with the implementation contract.
+
+### 11.5 Documentation and metadata
+
+Canonical Dataform actions must include descriptions that identify their business responsibility and declared grain.
+
+Published columns must use stable, documented names. A change to relation grain, canonical key composition, source namespace, measure semantics, or required field behavior constitutes a contract change and requires documentation and downstream impact review.
+
+### 11.6 Validation sequence
+
+Every source-specific implementation must be validated through:
+
+1. Dataform compilation;
+2. warehouse dry runs;
+3. execution under the dedicated transformation identity;
+4. blocking assertion execution;
+5. non-blocking quality-output validation;
+6. row-count and measure reconciliation;
+7. resulting BigQuery schema and relation inspection.
+
+The source-specific publication contract must record the evidence required to declare the implementation complete.
