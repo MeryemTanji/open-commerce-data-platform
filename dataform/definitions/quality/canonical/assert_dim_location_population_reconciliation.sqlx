@@ -1,0 +1,134 @@
+config {
+  type: "assertion",
+  schema: "canonical",
+  name: "assert_dim_location_population_reconciliation",
+  description: "Fails when dim_location loses an expected postal-code prefix or disagrees with its governed geographic-resolution input."
+}
+
+WITH location_prefixes AS (
+  SELECT
+    geolocation_zip_code_prefix AS postal_code_prefix
+  FROM ${ref("stg_geolocations")}
+
+  UNION DISTINCT
+
+  SELECT
+    customer_zip_code_prefix
+  FROM ${ref("stg_customers")}
+
+  UNION DISTINCT
+
+  SELECT
+    seller_zip_code_prefix
+  FROM ${ref("stg_sellers")}
+),
+
+expected_locations AS (
+  SELECT
+    "BR" AS country_code,
+    prefix.postal_code_prefix,
+    resolution.resolved_city,
+    resolution.resolved_state,
+    resolution.representative_latitude,
+    resolution.representative_longitude,
+    CASE
+      WHEN resolution.postal_code_prefix IS NOT NULL
+        THEN "resolved"
+      ELSE "missing_reference"
+    END AS geolocation_coverage_status,
+    COALESCE(
+      resolution.source_observation_count,
+      0
+    ) AS source_observation_count,
+    COALESCE(
+      resolution.distinct_observation_count,
+      0
+    ) AS distinct_observation_count,
+    COALESCE(
+      resolution.distinct_city_count,
+      0
+    ) AS distinct_city_count,
+    COALESCE(
+      resolution.distinct_state_count,
+      0
+    ) AS distinct_state_count,
+    COALESCE(
+      resolution.distinct_coordinate_count,
+      0
+    ) AS distinct_coordinate_count,
+    COALESCE(
+      resolution.has_multiple_cities,
+      FALSE
+    ) AS has_multiple_cities,
+    COALESCE(
+      resolution.has_multiple_states,
+      FALSE
+    ) AS has_multiple_states,
+    COALESCE(
+      resolution.has_multiple_coordinates,
+      FALSE
+    ) AS has_multiple_coordinates,
+    COALESCE(
+      resolution.has_modal_city_tie,
+      FALSE
+    ) AS has_modal_city_tie,
+    COALESCE(
+      resolution.has_modal_state_tie,
+      FALSE
+    ) AS has_modal_state_tie,
+    CASE
+      WHEN resolution.postal_code_prefix IS NOT NULL
+        THEN resolution.resolution_method
+      ELSE "unresolved_missing_reference"
+    END AS resolution_method
+  FROM location_prefixes AS prefix
+  LEFT JOIN ${ref("int_geolocation_resolution")} AS resolution
+    USING (postal_code_prefix)
+)
+
+SELECT
+  COALESCE(
+    actual.postal_code_prefix,
+    expected.postal_code_prefix
+  ) AS postal_code_prefix
+FROM expected_locations AS expected
+FULL OUTER JOIN ${ref("dim_location")} AS actual
+  USING (
+    country_code,
+    postal_code_prefix
+  )
+WHERE
+  actual.postal_code_prefix IS NULL
+  OR expected.postal_code_prefix IS NULL
+  OR actual.resolved_city
+    IS DISTINCT FROM expected.resolved_city
+  OR actual.resolved_state
+    IS DISTINCT FROM expected.resolved_state
+  OR actual.representative_latitude
+    IS DISTINCT FROM expected.representative_latitude
+  OR actual.representative_longitude
+    IS DISTINCT FROM expected.representative_longitude
+  OR actual.geolocation_coverage_status
+    IS DISTINCT FROM expected.geolocation_coverage_status
+  OR actual.source_observation_count
+    IS DISTINCT FROM expected.source_observation_count
+  OR actual.distinct_observation_count
+    IS DISTINCT FROM expected.distinct_observation_count
+  OR actual.distinct_city_count
+    IS DISTINCT FROM expected.distinct_city_count
+  OR actual.distinct_state_count
+    IS DISTINCT FROM expected.distinct_state_count
+  OR actual.distinct_coordinate_count
+    IS DISTINCT FROM expected.distinct_coordinate_count
+  OR actual.has_multiple_cities
+    IS DISTINCT FROM expected.has_multiple_cities
+  OR actual.has_multiple_states
+    IS DISTINCT FROM expected.has_multiple_states
+  OR actual.has_multiple_coordinates
+    IS DISTINCT FROM expected.has_multiple_coordinates
+  OR actual.has_modal_city_tie
+    IS DISTINCT FROM expected.has_modal_city_tie
+  OR actual.has_modal_state_tie
+    IS DISTINCT FROM expected.has_modal_state_tie
+  OR actual.resolution_method
+    IS DISTINCT FROM expected.resolution_method

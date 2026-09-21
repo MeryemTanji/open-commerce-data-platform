@@ -1,0 +1,121 @@
+config {
+  type: "table",
+  schema: "canonical",
+  name: "dim_location",
+  description: "Canonical Brazilian postal-code-prefix locations combining resolved geolocation evidence with customer- and seller-referenced placeholder locations.",
+  tags: ["canonical", "olist", "dimension"],
+  columns: {
+    location_key: "Deterministic canonical key derived from country code and postal-code prefix.",
+    country_code: "Governed country context for the postal-code prefix.",
+    postal_code_prefix: "Normalized source postal-code prefix.",
+    resolved_city: "Deterministically selected representative city.",
+    resolved_state: "Deterministically selected representative state.",
+    representative_latitude: "Median latitude across observations in the resolved state.",
+    representative_longitude: "Median longitude across observations in the resolved state.",
+    geolocation_coverage_status: "Indicates whether staged geolocation evidence exists.",
+    source_observation_count: "Number of staged geolocation observations.",
+    distinct_observation_count: "Number of distinct normalized geolocation observations.",
+    distinct_city_count: "Number of cities observed within the resolved state.",
+    distinct_state_count: "Number of states observed for the prefix.",
+    distinct_coordinate_count: "Number of distinct coordinate pairs in the resolved state.",
+    has_multiple_cities: "Indicates city-level ambiguity.",
+    has_multiple_states: "Indicates state-level ambiguity.",
+    has_multiple_coordinates: "Indicates coordinate variation.",
+    has_modal_city_tie: "Indicates a tie between leading city values.",
+    has_modal_state_tie: "Indicates a tie between leading state values.",
+    resolution_method: "Versioned geographic-resolution method."
+  }
+}
+
+WITH location_prefixes AS (
+  SELECT
+    geolocation_zip_code_prefix AS postal_code_prefix
+  FROM ${ref("stg_geolocations")}
+
+  UNION DISTINCT
+
+  SELECT
+    customer_zip_code_prefix
+  FROM ${ref("stg_customers")}
+
+  UNION DISTINCT
+
+  SELECT
+    seller_zip_code_prefix
+  FROM ${ref("stg_sellers")}
+),
+
+location_population AS (
+  SELECT
+    "BR" AS country_code,
+    postal_code_prefix
+  FROM location_prefixes
+)
+
+SELECT
+  ${canonical_keys.generateReferenceKey({
+    entityType: "location",
+    referenceIdentifiers: [
+      "location.country_code",
+      "location.postal_code_prefix"
+    ]
+  })} AS location_key,
+  location.country_code,
+  location.postal_code_prefix,
+  resolution.resolved_city,
+  resolution.resolved_state,
+  resolution.representative_latitude,
+  resolution.representative_longitude,
+  CASE
+    WHEN resolution.postal_code_prefix IS NOT NULL
+      THEN "resolved"
+    ELSE "missing_reference"
+  END AS geolocation_coverage_status,
+  COALESCE(
+    resolution.source_observation_count,
+    0
+  ) AS source_observation_count,
+  COALESCE(
+    resolution.distinct_observation_count,
+    0
+  ) AS distinct_observation_count,
+  COALESCE(
+    resolution.distinct_city_count,
+    0
+  ) AS distinct_city_count,
+  COALESCE(
+    resolution.distinct_state_count,
+    0
+  ) AS distinct_state_count,
+  COALESCE(
+    resolution.distinct_coordinate_count,
+    0
+  ) AS distinct_coordinate_count,
+  COALESCE(
+    resolution.has_multiple_cities,
+    FALSE
+  ) AS has_multiple_cities,
+  COALESCE(
+    resolution.has_multiple_states,
+    FALSE
+  ) AS has_multiple_states,
+  COALESCE(
+    resolution.has_multiple_coordinates,
+    FALSE
+  ) AS has_multiple_coordinates,
+  COALESCE(
+    resolution.has_modal_city_tie,
+    FALSE
+  ) AS has_modal_city_tie,
+  COALESCE(
+    resolution.has_modal_state_tie,
+    FALSE
+  ) AS has_modal_state_tie,
+  CASE
+    WHEN resolution.postal_code_prefix IS NOT NULL
+      THEN resolution.resolution_method
+    ELSE "unresolved_missing_reference"
+  END AS resolution_method
+FROM location_population AS location
+LEFT JOIN ${ref("int_geolocation_resolution")} AS resolution
+  USING (postal_code_prefix)

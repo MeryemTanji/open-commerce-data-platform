@@ -1,0 +1,228 @@
+config {
+  type: "table",
+  schema: "canonical",
+  name: "int_geolocation_resolution",
+  description: "Internal Olist preparation relation resolving repeated geolocation observations to one deterministic record per postal-code prefix.",
+  tags: ["canonical", "olist", "intermediate"],
+  columns: {
+    postal_code_prefix: "Normalized Brazilian postal-code prefix.",
+    resolved_city: "Modal city within the resolved state, using a lexical tie-breaker.",
+    resolved_state: "Modal state for the prefix, using a lexical tie-breaker.",
+    representative_latitude: "Median latitude across observations in the resolved state.",
+    representative_longitude: "Median longitude across observations in the resolved state.",
+    source_observation_count: "Number of staged geolocation observations for the prefix.",
+    distinct_observation_count: "Number of distinct normalized geolocation observations.",
+    coordinate_observation_count: "Number of coordinate observations eligible for resolution.",
+    distinct_city_count: "Number of cities observed within the resolved state.",
+    distinct_state_count: "Number of states observed for the prefix.",
+    distinct_coordinate_count: "Number of distinct coordinate pairs within the resolved state.",
+    has_multiple_cities: "Indicates whether multiple cities occur within the resolved state.",
+    has_multiple_states: "Indicates whether multiple states occur for the prefix.",
+    has_multiple_coordinates: "Indicates whether multiple eligible coordinate pairs occur.",
+    has_modal_city_tie: "Indicates whether multiple cities share the leading observation count.",
+    has_modal_state_tie: "Indicates whether multiple states share the leading observation count.",
+    resolution_method: "Versioned deterministic geographic-resolution method."
+  }
+}
+
+WITH source_observation_metrics AS (
+  SELECT
+    geolocation_zip_code_prefix AS postal_code_prefix,
+    COUNT(*) AS source_observation_count,
+    COUNT(
+      DISTINCT TO_JSON_STRING(
+        STRUCT(
+          geolocation_lat AS latitude,
+          geolocation_lng AS longitude,
+          geolocation_city AS city,
+          geolocation_state AS state
+        )
+      )
+    ) AS distinct_observation_count
+  FROM ${ref("stg_geolocations")}
+  GROUP BY geolocation_zip_code_prefix
+),
+
+state_counts AS (
+  SELECT
+    geolocation_zip_code_prefix AS postal_code_prefix,
+    geolocation_state,
+    COUNT(*) AS observation_count
+  FROM ${ref("stg_geolocations")}
+  GROUP BY
+    geolocation_zip_code_prefix,
+    geolocation_state
+),
+
+state_rank_base AS (
+  SELECT
+    postal_code_prefix,
+    geolocation_state,
+    observation_count,
+    ROW_NUMBER() OVER (
+      PARTITION BY postal_code_prefix
+      ORDER BY
+        observation_count DESC,
+        geolocation_state
+    ) AS state_rank,
+    COUNT(*) OVER (
+      PARTITION BY postal_code_prefix
+    ) AS distinct_state_count,
+    MAX(observation_count) OVER (
+      PARTITION BY postal_code_prefix
+    ) AS maximum_state_observation_count
+  FROM state_counts
+),
+
+state_ranked AS (
+  SELECT
+    *,
+    COUNTIF(
+      observation_count = maximum_state_observation_count
+    ) OVER (
+      PARTITION BY postal_code_prefix
+    ) AS leading_state_count
+  FROM state_rank_base
+),
+
+resolved_states AS (
+  SELECT
+    postal_code_prefix,
+    geolocation_state AS resolved_state,
+    distinct_state_count,
+    distinct_state_count > 1 AS has_multiple_states,
+    leading_state_count > 1 AS has_modal_state_tie
+  FROM state_ranked
+  WHERE state_rank = 1
+),
+
+eligible_state_observations AS (
+  SELECT
+    geolocation.geolocation_zip_code_prefix AS postal_code_prefix,
+    geolocation.geolocation_city,
+    geolocation.geolocation_lat,
+    geolocation.geolocation_lng
+  FROM ${ref("stg_geolocations")} AS geolocation
+  JOIN resolved_states AS state
+    ON geolocation.geolocation_zip_code_prefix =
+      state.postal_code_prefix
+    AND geolocation.geolocation_state =
+      state.resolved_state
+),
+
+city_counts AS (
+  SELECT
+    postal_code_prefix,
+    geolocation_city,
+    COUNT(*) AS observation_count
+  FROM eligible_state_observations
+  GROUP BY
+    postal_code_prefix,
+    geolocation_city
+),
+
+city_rank_base AS (
+  SELECT
+    postal_code_prefix,
+    geolocation_city,
+    observation_count,
+    ROW_NUMBER() OVER (
+      PARTITION BY postal_code_prefix
+      ORDER BY
+        observation_count DESC,
+        geolocation_city
+    ) AS city_rank,
+    COUNT(*) OVER (
+      PARTITION BY postal_code_prefix
+    ) AS distinct_city_count,
+    MAX(observation_count) OVER (
+      PARTITION BY postal_code_prefix
+    ) AS maximum_city_observation_count
+  FROM city_counts
+),
+
+city_ranked AS (
+  SELECT
+    *,
+    COUNTIF(
+      observation_count = maximum_city_observation_count
+    ) OVER (
+      PARTITION BY postal_code_prefix
+    ) AS leading_city_count
+  FROM city_rank_base
+),
+
+resolved_cities AS (
+  SELECT
+    postal_code_prefix,
+    geolocation_city AS resolved_city,
+    distinct_city_count,
+    distinct_city_count > 1 AS has_multiple_cities,
+    leading_city_count > 1 AS has_modal_city_tie
+  FROM city_ranked
+  WHERE city_rank = 1
+),
+
+coordinate_metrics AS (
+  SELECT
+    postal_code_prefix,
+    COUNT(*) AS coordinate_observation_count,
+    COUNT(
+      DISTINCT TO_JSON_STRING(
+        STRUCT(
+          geolocation_lat AS latitude,
+          geolocation_lng AS longitude
+        )
+      )
+    ) AS distinct_coordinate_count
+  FROM eligible_state_observations
+  GROUP BY postal_code_prefix
+),
+
+coordinate_medians AS (
+  SELECT DISTINCT
+    postal_code_prefix,
+    PERCENTILE_CONT(
+      geolocation_lat,
+      0.5
+    ) OVER (
+      PARTITION BY postal_code_prefix
+    ) AS representative_latitude,
+    PERCENTILE_CONT(
+      geolocation_lng,
+      0.5
+    ) OVER (
+      PARTITION BY postal_code_prefix
+    ) AS representative_longitude
+  FROM eligible_state_observations
+)
+
+SELECT
+  observation.postal_code_prefix,
+  city.resolved_city,
+  state.resolved_state,
+  coordinates.representative_latitude,
+  coordinates.representative_longitude,
+  observation.source_observation_count,
+  observation.distinct_observation_count,
+  coordinate_metrics.coordinate_observation_count,
+  city.distinct_city_count,
+  state.distinct_state_count,
+  coordinate_metrics.distinct_coordinate_count,
+  city.has_multiple_cities,
+  state.has_multiple_states,
+  coordinate_metrics.distinct_coordinate_count > 1
+    AS has_multiple_coordinates,
+  city.has_modal_city_tie,
+  state.has_modal_state_tie,
+  "modal_state_modal_city_median_coordinates_v1"
+    AS resolution_method
+FROM source_observation_metrics AS observation
+JOIN resolved_states AS state
+  USING (postal_code_prefix)
+JOIN resolved_cities AS city
+  USING (postal_code_prefix)
+JOIN coordinate_metrics
+  USING (postal_code_prefix)
+JOIN coordinate_medians AS coordinates
+  USING (postal_code_prefix)

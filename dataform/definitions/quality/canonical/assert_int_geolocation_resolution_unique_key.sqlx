@@ -1,0 +1,15 @@
+config {
+  type: "assertion",
+  schema: "canonical",
+  name: "assert_int_geolocation_resolution_unique_key",
+  description: "Fails when geographic resolution contains a null or duplicated postal-code prefix."
+}
+
+SELECT
+  postal_code_prefix,
+  COUNT(*) AS row_count
+FROM ${ref("int_geolocation_resolution")}
+GROUP BY postal_code_prefix
+HAVING
+  postal_code_prefix IS NULL
+  OR COUNT(*) > 1

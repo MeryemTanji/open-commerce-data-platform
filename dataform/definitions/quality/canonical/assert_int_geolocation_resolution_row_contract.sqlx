@@ -1,0 +1,48 @@
+config {
+  type: "assertion",
+  schema: "canonical",
+  name: "assert_int_geolocation_resolution_row_contract",
+  description: "Fails when resolved geographic attributes, counts, indicators, coordinates, or method values are internally inconsistent."
+}
+
+SELECT
+  *
+FROM ${ref("int_geolocation_resolution")}
+WHERE
+  postal_code_prefix IS NULL
+  OR resolved_city IS NULL
+  OR resolved_state IS NULL
+  OR representative_latitude IS NULL
+  OR representative_longitude IS NULL
+  OR source_observation_count IS NULL
+  OR distinct_observation_count IS NULL
+  OR coordinate_observation_count IS NULL
+  OR distinct_city_count IS NULL
+  OR distinct_state_count IS NULL
+  OR distinct_coordinate_count IS NULL
+  OR has_multiple_cities IS NULL
+  OR has_multiple_states IS NULL
+  OR has_multiple_coordinates IS NULL
+  OR has_modal_city_tie IS NULL
+  OR has_modal_state_tie IS NULL
+  OR resolution_method IS NULL
+  OR source_observation_count < 1
+  OR distinct_observation_count < 1
+  OR coordinate_observation_count < 1
+  OR distinct_city_count < 1
+  OR distinct_state_count < 1
+  OR distinct_coordinate_count < 1
+  OR distinct_observation_count > source_observation_count
+  OR distinct_city_count > coordinate_observation_count
+  OR distinct_state_count > source_observation_count
+  OR distinct_coordinate_count > coordinate_observation_count
+  OR has_multiple_cities
+    IS DISTINCT FROM (distinct_city_count > 1)
+  OR has_multiple_states
+    IS DISTINCT FROM (distinct_state_count > 1)
+  OR has_multiple_coordinates
+    IS DISTINCT FROM (distinct_coordinate_count > 1)
+  OR representative_latitude NOT BETWEEN -90 AND 90
+  OR representative_longitude NOT BETWEEN -180 AND 180
+  OR resolution_method !=
+    "modal_state_modal_city_median_coordinates_v1"

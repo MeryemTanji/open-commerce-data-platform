@@ -1,0 +1,180 @@
+config {
+  type: "assertion",
+  schema: "canonical",
+  name: "assert_int_geolocation_resolution_source_consistency",
+  description: "Fails when geographic resolution loses a staged prefix or disagrees with the governed source-derived state, city, coordinate, or count rules."
+}
+
+WITH source_metrics AS (
+  SELECT
+    geolocation_zip_code_prefix AS postal_code_prefix,
+    COUNT(*) AS expected_source_observation_count,
+    COUNT(
+      DISTINCT TO_JSON_STRING(
+        STRUCT(
+          geolocation_lat AS latitude,
+          geolocation_lng AS longitude,
+          geolocation_city AS city,
+          geolocation_state AS state
+        )
+      )
+    ) AS expected_distinct_observation_count
+  FROM ${ref("stg_geolocations")}
+  GROUP BY geolocation_zip_code_prefix
+),
+
+state_counts AS (
+  SELECT
+    geolocation_zip_code_prefix AS postal_code_prefix,
+    geolocation_state,
+    COUNT(*) AS observation_count
+  FROM ${ref("stg_geolocations")}
+  GROUP BY
+    geolocation_zip_code_prefix,
+    geolocation_state
+),
+
+expected_states AS (
+  SELECT
+    postal_code_prefix,
+    ARRAY_AGG(
+      geolocation_state
+      ORDER BY
+        observation_count DESC,
+        geolocation_state
+      LIMIT 1
+    )[OFFSET(0)] AS expected_resolved_state,
+    COUNT(*) AS expected_distinct_state_count
+  FROM state_counts
+  GROUP BY postal_code_prefix
+),
+
+eligible_state_observations AS (
+  SELECT
+    geolocation.geolocation_zip_code_prefix AS postal_code_prefix,
+    geolocation.geolocation_city,
+    geolocation.geolocation_lat,
+    geolocation.geolocation_lng
+  FROM ${ref("stg_geolocations")} AS geolocation
+  JOIN expected_states AS state
+    ON geolocation.geolocation_zip_code_prefix =
+      state.postal_code_prefix
+    AND geolocation.geolocation_state =
+      state.expected_resolved_state
+),
+
+city_counts AS (
+  SELECT
+    postal_code_prefix,
+    geolocation_city,
+    COUNT(*) AS observation_count
+  FROM eligible_state_observations
+  GROUP BY
+    postal_code_prefix,
+    geolocation_city
+),
+
+expected_cities AS (
+  SELECT
+    postal_code_prefix,
+    ARRAY_AGG(
+      geolocation_city
+      ORDER BY
+        observation_count DESC,
+        geolocation_city
+      LIMIT 1
+    )[OFFSET(0)] AS expected_resolved_city,
+    COUNT(*) AS expected_distinct_city_count
+  FROM city_counts
+  GROUP BY postal_code_prefix
+),
+
+expected_coordinate_metrics AS (
+  SELECT
+    postal_code_prefix,
+    COUNT(*) AS expected_coordinate_observation_count,
+    COUNT(
+      DISTINCT TO_JSON_STRING(
+        STRUCT(
+          geolocation_lat AS latitude,
+          geolocation_lng AS longitude
+        )
+      )
+    ) AS expected_distinct_coordinate_count
+  FROM eligible_state_observations
+  GROUP BY postal_code_prefix
+),
+
+expected_coordinate_medians AS (
+  SELECT DISTINCT
+    postal_code_prefix,
+    PERCENTILE_CONT(
+      geolocation_lat,
+      0.5
+    ) OVER (
+      PARTITION BY postal_code_prefix
+    ) AS expected_representative_latitude,
+    PERCENTILE_CONT(
+      geolocation_lng,
+      0.5
+    ) OVER (
+      PARTITION BY postal_code_prefix
+    ) AS expected_representative_longitude
+  FROM eligible_state_observations
+),
+
+expected_resolution AS (
+  SELECT
+    source.postal_code_prefix,
+    state.expected_resolved_state,
+    city.expected_resolved_city,
+    coordinates.expected_representative_latitude,
+    coordinates.expected_representative_longitude,
+    source.expected_source_observation_count,
+    source.expected_distinct_observation_count,
+    coordinate_metrics.expected_coordinate_observation_count,
+    city.expected_distinct_city_count,
+    state.expected_distinct_state_count,
+    coordinate_metrics.expected_distinct_coordinate_count
+  FROM source_metrics AS source
+  JOIN expected_states AS state
+    USING (postal_code_prefix)
+  JOIN expected_cities AS city
+    USING (postal_code_prefix)
+  JOIN expected_coordinate_metrics AS coordinate_metrics
+    USING (postal_code_prefix)
+  JOIN expected_coordinate_medians AS coordinates
+    USING (postal_code_prefix)
+)
+
+SELECT
+  COALESCE(
+    actual.postal_code_prefix,
+    expected.postal_code_prefix
+  ) AS postal_code_prefix
+FROM expected_resolution AS expected
+FULL OUTER JOIN ${ref("int_geolocation_resolution")} AS actual
+  USING (postal_code_prefix)
+WHERE
+  actual.postal_code_prefix IS NULL
+  OR expected.postal_code_prefix IS NULL
+  OR actual.resolved_state
+    IS DISTINCT FROM expected.expected_resolved_state
+  OR actual.resolved_city
+    IS DISTINCT FROM expected.expected_resolved_city
+  OR actual.representative_latitude
+    IS DISTINCT FROM expected.expected_representative_latitude
+  OR actual.representative_longitude
+    IS DISTINCT FROM expected.expected_representative_longitude
+  OR actual.source_observation_count
+    IS DISTINCT FROM expected.expected_source_observation_count
+  OR actual.distinct_observation_count
+    IS DISTINCT FROM expected.expected_distinct_observation_count
+  OR actual.coordinate_observation_count
+    IS DISTINCT FROM expected.expected_coordinate_observation_count
+  OR actual.distinct_city_count
+    IS DISTINCT FROM expected.expected_distinct_city_count
+  OR actual.distinct_state_count
+    IS DISTINCT FROM expected.expected_distinct_state_count
+  OR actual.distinct_coordinate_count
+    IS DISTINCT FROM expected.expected_distinct_coordinate_count

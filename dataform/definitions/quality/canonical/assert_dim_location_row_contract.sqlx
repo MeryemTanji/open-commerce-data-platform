@@ -1,0 +1,75 @@
+config {
+  type: "assertion",
+  schema: "canonical",
+  name: "assert_dim_location_row_contract",
+  description: "Fails when dim_location coverage statuses, resolved attributes, counts, indicators, or resolution methods are inconsistent."
+}
+
+SELECT
+  *
+FROM ${ref("dim_location")}
+WHERE
+  geolocation_coverage_status NOT IN (
+    "resolved",
+    "missing_reference"
+  )
+  OR source_observation_count IS NULL
+  OR distinct_observation_count IS NULL
+  OR distinct_city_count IS NULL
+  OR distinct_state_count IS NULL
+  OR distinct_coordinate_count IS NULL
+  OR has_multiple_cities IS NULL
+  OR has_multiple_states IS NULL
+  OR has_multiple_coordinates IS NULL
+  OR has_modal_city_tie IS NULL
+  OR has_modal_state_tie IS NULL
+  OR resolution_method IS NULL
+  OR source_observation_count < 0
+  OR distinct_observation_count < 0
+  OR distinct_city_count < 0
+  OR distinct_state_count < 0
+  OR distinct_coordinate_count < 0
+  OR has_multiple_cities
+    IS DISTINCT FROM (distinct_city_count > 1)
+  OR has_multiple_states
+    IS DISTINCT FROM (distinct_state_count > 1)
+  OR has_multiple_coordinates
+    IS DISTINCT FROM (distinct_coordinate_count > 1)
+  OR (
+    geolocation_coverage_status = "resolved"
+    AND (
+      resolved_city IS NULL
+      OR resolved_state IS NULL
+      OR representative_latitude IS NULL
+      OR representative_longitude IS NULL
+      OR source_observation_count < 1
+      OR distinct_observation_count < 1
+      OR distinct_city_count < 1
+      OR distinct_state_count < 1
+      OR distinct_coordinate_count < 1
+      OR representative_latitude NOT BETWEEN -90 AND 90
+      OR representative_longitude NOT BETWEEN -180 AND 180
+      OR resolution_method !=
+        "modal_state_modal_city_median_coordinates_v1"
+    )
+  )
+  OR (
+    geolocation_coverage_status = "missing_reference"
+    AND (
+      resolved_city IS NOT NULL
+      OR resolved_state IS NOT NULL
+      OR representative_latitude IS NOT NULL
+      OR representative_longitude IS NOT NULL
+      OR source_observation_count != 0
+      OR distinct_observation_count != 0
+      OR distinct_city_count != 0
+      OR distinct_state_count != 0
+      OR distinct_coordinate_count != 0
+      OR has_multiple_cities
+      OR has_multiple_states
+      OR has_multiple_coordinates
+      OR has_modal_city_tie
+      OR has_modal_state_tie
+      OR resolution_method != "unresolved_missing_reference"
+    )
+  )

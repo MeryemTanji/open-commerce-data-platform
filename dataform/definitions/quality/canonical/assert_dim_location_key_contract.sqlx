@@ -1,0 +1,39 @@
+config {
+  type: "assertion",
+  schema: "canonical",
+  name: "assert_dim_location_key_contract",
+  description: "Fails when dim_location contains invalid, duplicated, or nondeterministic location keys."
+}
+
+WITH key_validation AS (
+  SELECT
+    *,
+    ${canonical_keys.generateReferenceKey({
+      entityType: "location",
+      referenceIdentifiers: [
+        "country_code",
+        "postal_code_prefix"
+      ]
+    })} AS expected_location_key,
+    COUNT(*) OVER (
+      PARTITION BY location_key
+    ) AS location_key_row_count,
+    COUNT(*) OVER (
+      PARTITION BY
+        country_code,
+        postal_code_prefix
+    ) AS location_grain_row_count
+  FROM ${ref("dim_location")}
+)
+
+SELECT
+  *
+FROM key_validation
+WHERE
+  location_key IS NULL
+  OR country_code IS NULL
+  OR postal_code_prefix IS NULL
+  OR country_code != "BR"
+  OR location_key IS DISTINCT FROM expected_location_key
+  OR location_key_row_count > 1
+  OR location_grain_row_count > 1
