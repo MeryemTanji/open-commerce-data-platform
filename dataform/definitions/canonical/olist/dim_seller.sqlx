@@ -1,0 +1,65 @@
+config {
+  type: "table",
+  schema: "canonical",
+  name: "dim_seller",
+  description: "Canonical Olist sellers preserving source address context and governed resolved geography.",
+  tags: ["canonical", "olist", "dimension"],
+  columns: {
+    seller_key: "Deterministic canonical primary key for the seller.",
+    source_namespace: "Stable namespace identifying the originating source instance.",
+    source_seller_id: "Preserved source seller_id.",
+    location_key: "Foreign key to the canonical seller location.",
+    source_postal_code_prefix: "Preserved postal-code prefix from the seller record.",
+    source_city: "Preserved normalized city from the seller record.",
+    source_state: "Preserved normalized state from the seller record.",
+    resolved_city: "Deterministically resolved city from dim_location.",
+    resolved_state: "Deterministically resolved state from dim_location.",
+    geolocation_coverage_status: "Indicates whether geographic reference evidence exists.",
+    seller_geographic_status: "Describes agreement between source and resolved seller geography."
+  }
+}
+
+WITH seller_identities AS (
+  SELECT
+    ${canonical_keys.generateCanonicalKey({
+      entityType: "seller",
+      sourceNamespace: "olist",
+      sourceIdentifiers: ["seller_id"]
+    })} AS seller_key,
+    "olist" AS source_namespace,
+    seller_id AS source_seller_id,
+    ${canonical_keys.generateReferenceKey({
+      entityType: "location",
+      referenceIdentifiers: [
+        "'BR'",
+        "seller_zip_code_prefix"
+      ]
+    })} AS location_key,
+    seller_zip_code_prefix AS source_postal_code_prefix,
+    seller_city AS source_city,
+    seller_state AS source_state
+  FROM ${ref("stg_sellers")}
+)
+
+SELECT
+  seller.seller_key,
+  seller.source_namespace,
+  seller.source_seller_id,
+  seller.location_key,
+  seller.source_postal_code_prefix,
+  seller.source_city,
+  seller.source_state,
+  location.resolved_city,
+  location.resolved_state,
+  location.geolocation_coverage_status,
+  CASE
+    WHEN location.geolocation_coverage_status =
+      "missing_reference"
+      THEN "missing_reference"
+    WHEN seller.source_state != location.resolved_state
+      THEN "state_mismatch"
+    ELSE "matched"
+  END AS seller_geographic_status
+FROM seller_identities AS seller
+LEFT JOIN ${ref("dim_location")} AS location
+  USING (location_key)

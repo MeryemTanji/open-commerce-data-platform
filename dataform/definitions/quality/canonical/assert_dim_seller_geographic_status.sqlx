@@ -1,0 +1,30 @@
+config {
+  type: "assertion",
+  schema: "canonical",
+  name: "assert_dim_seller_geographic_status",
+  description: "Fails when seller geographic status contradicts source and resolved location evidence."
+}
+
+SELECT
+  *
+FROM ${ref("dim_seller")}
+WHERE
+  seller_geographic_status NOT IN (
+    "matched",
+    "state_mismatch",
+    "missing_reference"
+  )
+  OR geolocation_coverage_status NOT IN (
+    "resolved",
+    "missing_reference"
+  )
+  OR seller_geographic_status IS DISTINCT FROM (
+    CASE
+      WHEN geolocation_coverage_status =
+        "missing_reference"
+        THEN "missing_reference"
+      WHEN source_state != resolved_state
+        THEN "state_mismatch"
+      ELSE "matched"
+    END
+  )

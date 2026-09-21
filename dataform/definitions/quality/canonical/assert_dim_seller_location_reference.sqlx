@@ -1,0 +1,38 @@
+config {
+  type: "assertion",
+  schema: "canonical",
+  name: "assert_dim_seller_location_reference",
+  description: "Fails when a seller location key is invalid or copied geographic attributes disagree with dim_location."
+}
+
+WITH seller_locations AS (
+  SELECT
+    seller.*,
+    ${canonical_keys.generateReferenceKey({
+      entityType: "location",
+      referenceIdentifiers: [
+        "'BR'",
+        "seller.source_postal_code_prefix"
+      ]
+    })} AS expected_location_key,
+    location.location_key AS parent_location_key,
+    location.resolved_city AS parent_resolved_city,
+    location.resolved_state AS parent_resolved_state,
+    location.geolocation_coverage_status
+      AS parent_coverage_status
+  FROM ${ref("dim_seller")} AS seller
+  LEFT JOIN ${ref("dim_location")} AS location
+    USING (location_key)
+)
+
+SELECT
+  *
+FROM seller_locations
+WHERE
+  location_key IS NULL
+  OR location_key IS DISTINCT FROM expected_location_key
+  OR parent_location_key IS NULL
+  OR resolved_city IS DISTINCT FROM parent_resolved_city
+  OR resolved_state IS DISTINCT FROM parent_resolved_state
+  OR geolocation_coverage_status
+    IS DISTINCT FROM parent_coverage_status

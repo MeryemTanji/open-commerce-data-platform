@@ -1,0 +1,25 @@
+config {
+  type: "assertion",
+  schema: "canonical",
+  name: "assert_dim_seller_source_reconciliation",
+  description: "Fails when dim_seller loses, introduces, or alters a staged seller or source address attribute."
+}
+
+SELECT
+  COALESCE(
+    actual.source_seller_id,
+    expected.seller_id
+  ) AS source_seller_id
+FROM ${ref("stg_sellers")} AS expected
+FULL OUTER JOIN ${ref("dim_seller")} AS actual
+  ON actual.source_namespace = "olist"
+  AND actual.source_seller_id = expected.seller_id
+WHERE
+  actual.source_seller_id IS NULL
+  OR expected.seller_id IS NULL
+  OR actual.source_postal_code_prefix
+    IS DISTINCT FROM expected.seller_zip_code_prefix
+  OR actual.source_city
+    IS DISTINCT FROM expected.seller_city
+  OR actual.source_state
+    IS DISTINCT FROM expected.seller_state

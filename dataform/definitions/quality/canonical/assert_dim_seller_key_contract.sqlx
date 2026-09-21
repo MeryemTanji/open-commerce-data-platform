@@ -1,0 +1,37 @@
+config {
+  type: "assertion",
+  schema: "canonical",
+  name: "assert_dim_seller_key_contract",
+  description: "Fails when dim_seller contains invalid, duplicated, or nondeterministic seller keys."
+}
+
+WITH key_validation AS (
+  SELECT
+    *,
+    ${canonical_keys.generateCanonicalKey({
+      entityType: "seller",
+      sourceNamespace: "olist",
+      sourceIdentifiers: ["source_seller_id"]
+    })} AS expected_seller_key,
+    COUNT(*) OVER (
+      PARTITION BY seller_key
+    ) AS seller_key_row_count,
+    COUNT(*) OVER (
+      PARTITION BY
+        source_namespace,
+        source_seller_id
+    ) AS source_identity_row_count
+  FROM ${ref("dim_seller")}
+)
+
+SELECT
+  *
+FROM key_validation
+WHERE
+  seller_key IS NULL
+  OR source_namespace IS NULL
+  OR source_seller_id IS NULL
+  OR source_namespace != "olist"
+  OR seller_key IS DISTINCT FROM expected_seller_key
+  OR seller_key_row_count > 1
+  OR source_identity_row_count > 1
