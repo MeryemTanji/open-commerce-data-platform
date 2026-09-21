@@ -1,0 +1,37 @@
+config {
+  type: "assertion",
+  schema: "canonical",
+  name: "assert_dim_customer_key_contract",
+  description: "Fails when dim_customer contains invalid, duplicated, or nondeterministic customer keys."
+}
+
+WITH key_validation AS (
+  SELECT
+    *,
+    ${canonical_keys.generateCanonicalKey({
+      entityType: "customer",
+      sourceNamespace: "olist",
+      sourceIdentifiers: ["source_customer_id"]
+    })} AS expected_customer_key,
+    COUNT(*) OVER (
+      PARTITION BY customer_key
+    ) AS customer_key_row_count,
+    COUNT(*) OVER (
+      PARTITION BY
+        source_namespace,
+        source_customer_id
+    ) AS source_identity_row_count
+  FROM ${ref("dim_customer")}
+)
+
+SELECT
+  *
+FROM key_validation
+WHERE
+  customer_key IS NULL
+  OR source_namespace IS NULL
+  OR source_customer_id IS NULL
+  OR source_namespace != "olist"
+  OR customer_key IS DISTINCT FROM expected_customer_key
+  OR customer_key_row_count > 1
+  OR source_identity_row_count > 1

@@ -1,0 +1,26 @@
+config {
+  type: "assertion",
+  schema: "canonical",
+  name: "assert_dim_customer_source_reconciliation",
+  description: "Fails when dim_customer loses or introduces a persistent customer identity relative to staging."
+}
+
+WITH expected_customers AS (
+  SELECT DISTINCT
+    customer_unique_id AS source_customer_id
+  FROM ${ref("stg_customers")}
+)
+
+SELECT
+  COALESCE(
+    actual.source_customer_id,
+    expected.source_customer_id
+  ) AS source_customer_id
+FROM expected_customers AS expected
+FULL OUTER JOIN ${ref("dim_customer")} AS actual
+  ON actual.source_namespace = "olist"
+  AND actual.source_customer_id =
+    expected.source_customer_id
+WHERE
+  actual.source_customer_id IS NULL
+  OR expected.source_customer_id IS NULL

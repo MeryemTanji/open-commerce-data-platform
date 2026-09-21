@@ -1,0 +1,28 @@
+config {
+  type: "table",
+  schema: "canonical",
+  name: "dim_customer",
+  description: "Canonical persistent customers at one row per Olist customer_unique_id.",
+  tags: ["canonical", "olist", "dimension"],
+  columns: {
+    customer_key: "Deterministic canonical primary key for the persistent customer.",
+    source_namespace: "Stable namespace identifying the originating source instance.",
+    source_customer_id: "Preserved Olist customer_unique_id representing persistent customer identity."
+  }
+}
+
+WITH customer_identities AS (
+  SELECT DISTINCT
+    customer_unique_id
+  FROM ${ref("stg_customers")}
+)
+
+SELECT
+  ${canonical_keys.generateCanonicalKey({
+    entityType: "customer",
+    sourceNamespace: "olist",
+    sourceIdentifiers: ["customer_unique_id"]
+  })} AS customer_key,
+  "olist" AS source_namespace,
+  customer_unique_id AS source_customer_id
+FROM customer_identities
