@@ -1,0 +1,130 @@
+config {
+  type: "table",
+  schema: "canonical",
+  name: "dim_date",
+  description: "Governed Gregorian calendar dimension covering every date required by the initial Olist canonical model.",
+  tags: ["canonical", "olist", "dimension"],
+  columns: {
+    date_key: "Calendar date and canonical primary key.",
+    calendar_year: "Four-digit calendar year.",
+    calendar_quarter: "Calendar quarter number from 1 to 4.",
+    calendar_quarter_name: "Stable calendar-quarter label.",
+    calendar_month: "Calendar month number from 1 to 12.",
+    calendar_month_name: "Full English calendar-month name.",
+    calendar_year_month: "Stable year-month label in YYYY-MM format.",
+    calendar_day_of_month: "Day number within the month.",
+    calendar_day_of_year: "Day number within the year.",
+    iso_day_of_week: "ISO weekday number from 1 for Monday through 7 for Sunday.",
+    calendar_day_name: "Full English weekday name.",
+    iso_week: "ISO week number.",
+    iso_year: "ISO week-numbering year.",
+    week_start_date: "Monday starting the ISO week.",
+    week_end_date: "Sunday ending the ISO week.",
+    month_start_date: "First calendar date of the month.",
+    month_end_date: "Last calendar date of the month.",
+    quarter_start_date: "First calendar date of the quarter.",
+    quarter_end_date: "Last calendar date of the quarter.",
+    year_start_date: "First calendar date of the year.",
+    year_end_date: "Last calendar date of the year.",
+    is_weekend: "Indicates whether the date is Saturday or Sunday."
+  }
+}
+
+WITH applicable_dates AS (
+  SELECT DATE(order_purchase_timestamp, "UTC") AS date_key
+  FROM ${ref("stg_orders")}
+
+  UNION ALL
+
+  SELECT DATE(order_approved_timestamp, "UTC")
+  FROM ${ref("stg_orders")}
+
+  UNION ALL
+
+  SELECT DATE(order_delivered_carrier_timestamp, "UTC")
+  FROM ${ref("stg_orders")}
+
+  UNION ALL
+
+  SELECT DATE(order_delivered_customer_timestamp, "UTC")
+  FROM ${ref("stg_orders")}
+
+  UNION ALL
+
+  SELECT order_estimated_delivery_date
+  FROM ${ref("stg_orders")}
+
+  UNION ALL
+
+  SELECT DATE(shipping_limit_timestamp, "UTC")
+  FROM ${ref("stg_order_items")}
+
+  UNION ALL
+
+  SELECT review_creation_date
+  FROM ${ref("stg_reviews")}
+
+  UNION ALL
+
+  SELECT DATE(review_answer_timestamp, "UTC")
+  FROM ${ref("stg_reviews")}
+),
+
+calendar_bounds AS (
+  SELECT
+    MIN(date_key) AS minimum_date,
+    MAX(date_key) AS maximum_date
+  FROM applicable_dates
+  WHERE date_key IS NOT NULL
+),
+
+calendar_dates AS (
+  SELECT
+    date_key
+  FROM calendar_bounds
+  CROSS JOIN UNNEST(
+    GENERATE_DATE_ARRAY(minimum_date, maximum_date)
+  ) AS date_key
+)
+
+SELECT
+  date_key,
+  EXTRACT(YEAR FROM date_key) AS calendar_year,
+  EXTRACT(QUARTER FROM date_key) AS calendar_quarter,
+  CONCAT("Q", CAST(EXTRACT(QUARTER FROM date_key) AS STRING))
+    AS calendar_quarter_name,
+  EXTRACT(MONTH FROM date_key) AS calendar_month,
+  FORMAT_DATE("%B", date_key) AS calendar_month_name,
+  FORMAT_DATE("%Y-%m", date_key) AS calendar_year_month,
+  EXTRACT(DAY FROM date_key) AS calendar_day_of_month,
+  EXTRACT(DAYOFYEAR FROM date_key) AS calendar_day_of_year,
+  MOD(EXTRACT(DAYOFWEEK FROM date_key) + 5, 7) + 1
+    AS iso_day_of_week,
+  FORMAT_DATE("%A", date_key) AS calendar_day_name,
+  EXTRACT(ISOWEEK FROM date_key) AS iso_week,
+  EXTRACT(ISOYEAR FROM date_key) AS iso_year,
+  DATE_TRUNC(date_key, ISOWEEK) AS week_start_date,
+  DATE_ADD(
+    DATE_TRUNC(date_key, ISOWEEK),
+    INTERVAL 6 DAY
+  ) AS week_end_date,
+  DATE_TRUNC(date_key, MONTH) AS month_start_date,
+  LAST_DAY(date_key, MONTH) AS month_end_date,
+  DATE_TRUNC(date_key, QUARTER) AS quarter_start_date,
+  DATE_SUB(
+    DATE_ADD(
+      DATE_TRUNC(date_key, QUARTER),
+      INTERVAL 3 MONTH
+    ),
+    INTERVAL 1 DAY
+  ) AS quarter_end_date,
+  DATE_TRUNC(date_key, YEAR) AS year_start_date,
+  DATE_SUB(
+    DATE_ADD(
+      DATE_TRUNC(date_key, YEAR),
+      INTERVAL 1 YEAR
+    ),
+    INTERVAL 1 DAY
+  ) AS year_end_date,
+  EXTRACT(DAYOFWEEK FROM date_key) IN (1, 7) AS is_weekend
+FROM calendar_dates

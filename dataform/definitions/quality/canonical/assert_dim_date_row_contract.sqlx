@@ -1,0 +1,39 @@
+config {
+  type: "assertion",
+  schema: "canonical",
+  name: "assert_dim_date_row_contract",
+  description: "Fails when dim_date contains null required attributes or invalid calendar-domain values."
+}
+
+SELECT
+  *
+FROM ${ref("dim_date")}
+WHERE
+  date_key IS NULL
+  OR calendar_year IS NULL
+  OR calendar_quarter IS NULL
+  OR calendar_quarter_name IS NULL
+  OR calendar_month IS NULL
+  OR calendar_month_name IS NULL
+  OR calendar_year_month IS NULL
+  OR calendar_day_of_month IS NULL
+  OR calendar_day_of_year IS NULL
+  OR iso_day_of_week IS NULL
+  OR calendar_day_name IS NULL
+  OR iso_week IS NULL
+  OR iso_year IS NULL
+  OR week_start_date IS NULL
+  OR week_end_date IS NULL
+  OR month_start_date IS NULL
+  OR month_end_date IS NULL
+  OR quarter_start_date IS NULL
+  OR quarter_end_date IS NULL
+  OR year_start_date IS NULL
+  OR year_end_date IS NULL
+  OR is_weekend IS NULL
+  OR calendar_quarter NOT BETWEEN 1 AND 4
+  OR calendar_month NOT BETWEEN 1 AND 12
+  OR calendar_day_of_month NOT BETWEEN 1 AND 31
+  OR calendar_day_of_year NOT BETWEEN 1 AND 366
+  OR iso_day_of_week NOT BETWEEN 1 AND 7
+  OR iso_week NOT BETWEEN 1 AND 53

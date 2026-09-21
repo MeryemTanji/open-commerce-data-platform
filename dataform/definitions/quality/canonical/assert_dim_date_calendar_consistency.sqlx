@@ -1,0 +1,169 @@
+config {
+  type: "assertion",
+  schema: "canonical",
+  name: "assert_dim_date_calendar_consistency",
+  description: "Fails when dim_date has missing or unexpected dates or contains attributes inconsistent with its date key."
+}
+
+WITH applicable_dates AS (
+  SELECT DATE(order_purchase_timestamp, "UTC") AS date_key
+  FROM ${ref("stg_orders")}
+
+  UNION ALL
+
+  SELECT DATE(order_approved_timestamp, "UTC")
+  FROM ${ref("stg_orders")}
+
+  UNION ALL
+
+  SELECT DATE(order_delivered_carrier_timestamp, "UTC")
+  FROM ${ref("stg_orders")}
+
+  UNION ALL
+
+  SELECT DATE(order_delivered_customer_timestamp, "UTC")
+  FROM ${ref("stg_orders")}
+
+  UNION ALL
+
+  SELECT order_estimated_delivery_date
+  FROM ${ref("stg_orders")}
+
+  UNION ALL
+
+  SELECT DATE(shipping_limit_timestamp, "UTC")
+  FROM ${ref("stg_order_items")}
+
+  UNION ALL
+
+  SELECT review_creation_date
+  FROM ${ref("stg_reviews")}
+
+  UNION ALL
+
+  SELECT DATE(review_answer_timestamp, "UTC")
+  FROM ${ref("stg_reviews")}
+),
+
+calendar_bounds AS (
+  SELECT
+    MIN(date_key) AS minimum_date,
+    MAX(date_key) AS maximum_date
+  FROM applicable_dates
+  WHERE date_key IS NOT NULL
+),
+
+expected_dates AS (
+  SELECT
+    date_key
+  FROM calendar_bounds
+  CROSS JOIN UNNEST(
+    GENERATE_DATE_ARRAY(minimum_date, maximum_date)
+  ) AS date_key
+),
+
+missing_dates AS (
+  SELECT
+    "missing_expected_date" AS failure_reason,
+    expected.date_key
+  FROM expected_dates AS expected
+  LEFT JOIN ${ref("dim_date")} AS actual
+    USING (date_key)
+  WHERE actual.date_key IS NULL
+),
+
+unexpected_dates AS (
+  SELECT
+    "unexpected_date" AS failure_reason,
+    actual.date_key
+  FROM ${ref("dim_date")} AS actual
+  LEFT JOIN expected_dates AS expected
+    USING (date_key)
+  WHERE expected.date_key IS NULL
+),
+
+inconsistent_attributes AS (
+  SELECT
+    "calendar_attributes_inconsistent_with_date_key" AS failure_reason,
+    date_key
+  FROM ${ref("dim_date")}
+  WHERE
+    calendar_year
+      IS DISTINCT FROM EXTRACT(YEAR FROM date_key)
+    OR calendar_quarter
+      IS DISTINCT FROM EXTRACT(QUARTER FROM date_key)
+    OR calendar_quarter_name
+      IS DISTINCT FROM CONCAT(
+        "Q",
+        CAST(EXTRACT(QUARTER FROM date_key) AS STRING)
+      )
+    OR calendar_month
+      IS DISTINCT FROM EXTRACT(MONTH FROM date_key)
+    OR calendar_month_name
+      IS DISTINCT FROM FORMAT_DATE("%B", date_key)
+    OR calendar_year_month
+      IS DISTINCT FROM FORMAT_DATE("%Y-%m", date_key)
+    OR calendar_day_of_month
+      IS DISTINCT FROM EXTRACT(DAY FROM date_key)
+    OR calendar_day_of_year
+      IS DISTINCT FROM EXTRACT(DAYOFYEAR FROM date_key)
+    OR iso_day_of_week
+      IS DISTINCT FROM MOD(
+        EXTRACT(DAYOFWEEK FROM date_key) + 5,
+        7
+      ) + 1
+    OR calendar_day_name
+      IS DISTINCT FROM FORMAT_DATE("%A", date_key)
+    OR iso_week
+      IS DISTINCT FROM EXTRACT(ISOWEEK FROM date_key)
+    OR iso_year
+      IS DISTINCT FROM EXTRACT(ISOYEAR FROM date_key)
+    OR week_start_date
+      IS DISTINCT FROM DATE_TRUNC(date_key, ISOWEEK)
+    OR week_end_date
+      IS DISTINCT FROM DATE_ADD(
+        DATE_TRUNC(date_key, ISOWEEK),
+        INTERVAL 6 DAY
+      )
+    OR month_start_date
+      IS DISTINCT FROM DATE_TRUNC(date_key, MONTH)
+    OR month_end_date
+      IS DISTINCT FROM LAST_DAY(date_key, MONTH)
+    OR quarter_start_date
+      IS DISTINCT FROM DATE_TRUNC(date_key, QUARTER)
+    OR quarter_end_date
+      IS DISTINCT FROM DATE_SUB(
+        DATE_ADD(
+          DATE_TRUNC(date_key, QUARTER),
+          INTERVAL 3 MONTH
+        ),
+        INTERVAL 1 DAY
+      )
+    OR year_start_date
+      IS DISTINCT FROM DATE_TRUNC(date_key, YEAR)
+    OR year_end_date
+      IS DISTINCT FROM DATE_SUB(
+        DATE_ADD(
+          DATE_TRUNC(date_key, YEAR),
+          INTERVAL 1 YEAR
+        ),
+        INTERVAL 1 DAY
+      )
+    OR is_weekend
+      IS DISTINCT FROM (
+        EXTRACT(DAYOFWEEK FROM date_key) IN (1, 7)
+      )
+)
+
+SELECT *
+FROM missing_dates
+
+UNION ALL
+
+SELECT *
+FROM unexpected_dates
+
+UNION ALL
+
+SELECT *
+FROM inconsistent_attributes
