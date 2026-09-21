@@ -1,0 +1,94 @@
+config {
+  type: "assertion",
+  schema: "canonical",
+  name: "assert_canonical_key_generation",
+  description: "Validates deterministic canonical-key generation, null handling, namespace separation, entity separation, and compound-key component order."
+}
+
+WITH generated_keys AS (
+  SELECT
+    ${canonical_keys.generateCanonicalKey({
+      entityType: "customer",
+      sourceNamespace: "mercury_test",
+      sourceIdentifiers: ["'customer-123'"]
+    })} AS first_key,
+
+    ${canonical_keys.generateCanonicalKey({
+      entityType: "customer",
+      sourceNamespace: "mercury_test",
+      sourceIdentifiers: ["'customer-123'"]
+    })} AS repeated_key,
+
+    ${canonical_keys.generateCanonicalKey({
+      entityType: "customer",
+      sourceNamespace: "mercury_test",
+      sourceIdentifiers: ["CAST(NULL AS STRING)"]
+    })} AS null_component_key,
+
+    ${canonical_keys.generateCanonicalKey({
+      entityType: "product",
+      sourceNamespace: "mercury_test",
+      sourceIdentifiers: ["'customer-123'"]
+    })} AS different_entity_key,
+
+    ${canonical_keys.generateCanonicalKey({
+      entityType: "customer",
+      sourceNamespace: "another_source",
+      sourceIdentifiers: ["'customer-123'"]
+    })} AS different_namespace_key,
+
+    ${canonical_keys.generateCanonicalKey({
+      entityType: "order_item",
+      sourceNamespace: "mercury_test",
+      sourceIdentifiers: ["'order-1'", "'item-1'"]
+    })} AS forward_compound_key,
+
+    ${canonical_keys.generateCanonicalKey({
+      entityType: "order_item",
+      sourceNamespace: "mercury_test",
+      sourceIdentifiers: ["'item-1'", "'order-1'"]
+    })} AS reversed_compound_key
+)
+
+SELECT
+  failure_reason
+FROM generated_keys
+CROSS JOIN UNNEST(
+  ARRAY_CONCAT(
+    IF(
+      first_key IS NULL,
+      ["non-null inputs produced a null key"],
+      []
+    ),
+    IF(
+      first_key != repeated_key,
+      ["identical inputs produced different keys"],
+      []
+    ),
+    IF(
+      null_component_key IS NOT NULL,
+      ["a null source component produced a key"],
+      []
+    ),
+    IF(
+      first_key = different_entity_key,
+      ["different entity types produced the same key"],
+      []
+    ),
+    IF(
+      first_key = different_namespace_key,
+      ["different source namespaces produced the same key"],
+      []
+    ),
+    IF(
+      forward_compound_key = reversed_compound_key,
+      ["compound-key component order did not affect the key"],
+      []
+    ),
+    IF(
+      NOT REGEXP_CONTAINS(first_key, r"^[0-9A-Fa-f]{64}$"),
+      ["generated key is not a 64-character hexadecimal SHA-256 value"],
+      []
+    )
+  )
+) AS failure_reason
