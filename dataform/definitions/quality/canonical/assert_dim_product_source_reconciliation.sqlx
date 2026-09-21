@@ -1,0 +1,35 @@
+config {
+  type: "assertion",
+  schema: "canonical",
+  name: "assert_dim_product_source_reconciliation",
+  description: "Fails when dim_product loses, introduces, or alters a staged product or source attribute."
+}
+
+SELECT
+  COALESCE(
+    actual.source_product_id,
+    expected.product_id
+  ) AS source_product_id
+FROM ${ref("stg_products")} AS expected
+FULL OUTER JOIN ${ref("dim_product")} AS actual
+  ON actual.source_namespace = "olist"
+  AND actual.source_product_id = expected.product_id
+WHERE
+  actual.source_product_id IS NULL
+  OR expected.product_id IS NULL
+  OR actual.product_category_name
+    IS DISTINCT FROM expected.product_category_name
+  OR actual.product_name_length
+    IS DISTINCT FROM expected.product_name_length
+  OR actual.product_description_length
+    IS DISTINCT FROM expected.product_description_length
+  OR actual.product_photos_count
+    IS DISTINCT FROM expected.product_photos_count
+  OR actual.product_weight_g
+    IS DISTINCT FROM expected.product_weight_g
+  OR actual.product_length_cm
+    IS DISTINCT FROM expected.product_length_cm
+  OR actual.product_height_cm
+    IS DISTINCT FROM expected.product_height_cm
+  OR actual.product_width_cm
+    IS DISTINCT FROM expected.product_width_cm

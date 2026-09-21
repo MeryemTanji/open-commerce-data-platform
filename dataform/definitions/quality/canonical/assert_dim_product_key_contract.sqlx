@@ -1,0 +1,37 @@
+config {
+  type: "assertion",
+  schema: "canonical",
+  name: "assert_dim_product_key_contract",
+  description: "Fails when dim_product contains invalid, duplicated, or nondeterministic product keys."
+}
+
+WITH key_validation AS (
+  SELECT
+    *,
+    ${canonical_keys.generateCanonicalKey({
+      entityType: "product",
+      sourceNamespace: "olist",
+      sourceIdentifiers: ["source_product_id"]
+    })} AS expected_product_key,
+    COUNT(*) OVER (
+      PARTITION BY product_key
+    ) AS product_key_row_count,
+    COUNT(*) OVER (
+      PARTITION BY
+        source_namespace,
+        source_product_id
+    ) AS source_identity_row_count
+  FROM ${ref("dim_product")}
+)
+
+SELECT
+  *
+FROM key_validation
+WHERE
+  product_key IS NULL
+  OR source_namespace IS NULL
+  OR source_product_id IS NULL
+  OR source_namespace != "olist"
+  OR product_key IS DISTINCT FROM expected_product_key
+  OR product_key_row_count > 1
+  OR source_identity_row_count > 1

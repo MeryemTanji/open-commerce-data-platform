@@ -1,0 +1,65 @@
+config {
+  type: "table",
+  schema: "canonical",
+  name: "dim_product",
+  description: "Canonical Olist products preserving source catalogue attributes and exposing governed metadata and measurement completeness statuses.",
+  tags: ["canonical", "olist", "dimension"],
+  columns: {
+    product_key: "Deterministic canonical primary key for the product.",
+    source_namespace: "Stable namespace identifying the originating source instance.",
+    source_product_id: "Preserved source product_id.",
+    product_category_name: "Normalized nullable source product-category name.",
+    product_name_length: "Source-provided product-name length.",
+    product_description_length: "Source-provided product-description length.",
+    product_photos_count: "Source-provided product-photo count.",
+    product_weight_g: "Source-provided product weight in grams.",
+    product_length_cm: "Source-provided product length in centimetres.",
+    product_height_cm: "Source-provided product height in centimetres.",
+    product_width_cm: "Source-provided product width in centimetres.",
+    catalog_metadata_status: "Indicates whether governed catalogue-description attributes are complete.",
+    physical_measurement_status: "Indicates whether all governed physical measurements are available.",
+    product_weight_status: "Distinguishes positive, zero, and missing product weights."
+  }
+}
+
+SELECT
+  ${canonical_keys.generateCanonicalKey({
+    entityType: "product",
+    sourceNamespace: "olist",
+    sourceIdentifiers: ["product_id"]
+  })} AS product_key,
+  "olist" AS source_namespace,
+  product_id AS source_product_id,
+  product_category_name,
+  product_name_length,
+  product_description_length,
+  product_photos_count,
+  product_weight_g,
+  product_length_cm,
+  product_height_cm,
+  product_width_cm,
+  CASE
+    WHEN product_category_name IS NOT NULL
+      AND product_name_length IS NOT NULL
+      AND product_description_length IS NOT NULL
+      AND product_photos_count IS NOT NULL
+      THEN "complete"
+    ELSE "missing"
+  END AS catalog_metadata_status,
+  CASE
+    WHEN product_weight_g IS NOT NULL
+      AND product_length_cm IS NOT NULL
+      AND product_height_cm IS NOT NULL
+      AND product_width_cm IS NOT NULL
+      THEN "complete"
+    ELSE "missing"
+  END AS physical_measurement_status,
+  CASE
+    WHEN product_weight_g IS NULL
+      THEN "missing"
+    WHEN product_weight_g = 0
+      THEN "zero"
+    WHEN product_weight_g > 0
+      THEN "positive"
+  END AS product_weight_status
+FROM ${ref("stg_products")}

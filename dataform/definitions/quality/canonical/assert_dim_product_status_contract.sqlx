@@ -1,0 +1,61 @@
+config {
+  type: "assertion",
+  schema: "canonical",
+  name: "assert_dim_product_status_contract",
+  description: "Fails when product completeness or weight statuses contradict preserved product attributes."
+}
+
+SELECT
+  *
+FROM ${ref("dim_product")}
+WHERE
+  catalog_metadata_status NOT IN (
+    "complete",
+    "missing"
+  )
+  OR physical_measurement_status NOT IN (
+    "complete",
+    "missing"
+  )
+  OR product_weight_status NOT IN (
+    "positive",
+    "zero",
+    "missing"
+  )
+  OR product_name_length < 0
+  OR product_description_length < 0
+  OR product_photos_count < 0
+  OR product_weight_g < 0
+  OR product_length_cm < 0
+  OR product_height_cm < 0
+  OR product_width_cm < 0
+  OR catalog_metadata_status IS DISTINCT FROM (
+    CASE
+      WHEN product_category_name IS NOT NULL
+        AND product_name_length IS NOT NULL
+        AND product_description_length IS NOT NULL
+        AND product_photos_count IS NOT NULL
+        THEN "complete"
+      ELSE "missing"
+    END
+  )
+  OR physical_measurement_status IS DISTINCT FROM (
+    CASE
+      WHEN product_weight_g IS NOT NULL
+        AND product_length_cm IS NOT NULL
+        AND product_height_cm IS NOT NULL
+        AND product_width_cm IS NOT NULL
+        THEN "complete"
+      ELSE "missing"
+    END
+  )
+  OR product_weight_status IS DISTINCT FROM (
+    CASE
+      WHEN product_weight_g IS NULL
+        THEN "missing"
+      WHEN product_weight_g = 0
+        THEN "zero"
+      WHEN product_weight_g > 0
+        THEN "positive"
+    END
+  )
