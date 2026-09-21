@@ -8,37 +8,54 @@ function validateStaticComponent(value, name) {
   }
 }
 
-function generateCanonicalKey({
-  entityType,
-  sourceNamespace,
-  sourceIdentifiers
-}) {
-  validateStaticComponent(entityType, "entityType");
-  validateStaticComponent(sourceNamespace, "sourceNamespace");
-
+function validateIdentifiers(identifiers, name) {
   if (
-    !Array.isArray(sourceIdentifiers) ||
-    sourceIdentifiers.length === 0 ||
-    sourceIdentifiers.some(
+    !Array.isArray(identifiers) ||
+    identifiers.length === 0 ||
+    identifiers.some(
       identifier =>
         typeof identifier !== "string" || identifier.trim().length === 0
     )
   ) {
     throw new Error(
-      "sourceIdentifiers must be a non-empty array of SQL expressions."
+      `${name} must be a non-empty array of SQL expressions.`
     );
   }
+}
 
-  const missingIdentifierCondition = sourceIdentifiers
+function renderKey({
+  entityType,
+  sourceNamespace,
+  identifiers,
+  identifierAlias
+}) {
+  validateStaticComponent(entityType, "entityType");
+  validateIdentifiers(identifiers, "identifiers");
+
+  if (sourceNamespace !== undefined) {
+    validateStaticComponent(sourceNamespace, "sourceNamespace");
+  }
+
+  const missingIdentifierCondition = identifiers
     .map(identifier => `(${identifier}) IS NULL`)
     .join("\n      OR ");
 
-  const serializedIdentifiers = sourceIdentifiers
-    .map(
-      (identifier, index) =>
-        `CAST((${identifier}) AS STRING) AS source_identifier_${index + 1}`
-    )
-    .join(",\n          ");
+  const structComponents = [
+    `"${KEY_VERSION}" AS key_version`,
+    `"${entityType}" AS entity_type`
+  ];
+
+  if (sourceNamespace !== undefined) {
+    structComponents.push(
+      `"${sourceNamespace}" AS source_namespace`
+    );
+  }
+
+  identifiers.forEach((identifier, index) => {
+    structComponents.push(
+      `CAST((${identifier}) AS STRING) AS ${identifierAlias}_${index + 1}`
+    );
+  });
 
   return `(
     CASE
@@ -48,10 +65,7 @@ function generateCanonicalKey({
         SHA256(
           TO_JSON_STRING(
             STRUCT(
-              "${KEY_VERSION}" AS key_version,
-              "${entityType}" AS entity_type,
-              "${sourceNamespace}" AS source_namespace,
-              ${serializedIdentifiers}
+              ${structComponents.join(",\n              ")}
             )
           )
         )
@@ -60,7 +74,32 @@ function generateCanonicalKey({
   )`;
 }
 
+function generateCanonicalKey({
+  entityType,
+  sourceNamespace,
+  sourceIdentifiers
+}) {
+  return renderKey({
+    entityType,
+    sourceNamespace,
+    identifiers: sourceIdentifiers,
+    identifierAlias: "source_identifier"
+  });
+}
+
+function generateReferenceKey({
+  entityType,
+  referenceIdentifiers
+}) {
+  return renderKey({
+    entityType,
+    identifiers: referenceIdentifiers,
+    identifierAlias: "reference_identifier"
+  });
+}
+
 module.exports = {
   KEY_VERSION,
-  generateCanonicalKey
+  generateCanonicalKey,
+  generateReferenceKey
 };

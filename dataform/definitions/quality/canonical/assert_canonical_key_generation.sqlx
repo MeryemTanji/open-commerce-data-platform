@@ -47,7 +47,32 @@ WITH generated_keys AS (
       entityType: "order_item",
       sourceNamespace: "mercury_test",
       sourceIdentifiers: ["'item-1'", "'order-1'"]
-    })} AS reversed_compound_key
+    })} AS reversed_compound_key,
+
+    ${canonical_keys.generateReferenceKey({
+      entityType: "location",
+      referenceIdentifiers: ["'BR'", "'01001'"]
+    })} AS first_reference_key,
+
+    ${canonical_keys.generateReferenceKey({
+      entityType: "location",
+      referenceIdentifiers: ["'BR'", "'01001'"]
+    })} AS repeated_reference_key,
+
+    ${canonical_keys.generateReferenceKey({
+      entityType: "location",
+      referenceIdentifiers: ["'NL'", "'01001'"]
+    })} AS different_country_reference_key,
+
+    ${canonical_keys.generateReferenceKey({
+      entityType: "location",
+      referenceIdentifiers: ["'01001'", "'BR'"]
+    })} AS reversed_reference_key,
+
+    ${canonical_keys.generateReferenceKey({
+      entityType: "location",
+      referenceIdentifiers: ["'BR'", "CAST(NULL AS STRING)"]
+    })} AS null_reference_key
 )
 
 SELECT
@@ -88,6 +113,34 @@ CROSS JOIN UNNEST(
     IF(
       NOT REGEXP_CONTAINS(first_key, r"^[0-9A-Fa-f]{64}$"),
       ["generated key is not a 64-character hexadecimal SHA-256 value"],
+      []
+    ),
+    IF(
+      first_reference_key != repeated_reference_key,
+      ["identical reference inputs produced different keys"],
+      []
+    ),
+    IF(
+      first_reference_key = different_country_reference_key,
+      ["different reference countries produced the same key"],
+      []
+    ),
+    IF(
+      first_reference_key = reversed_reference_key,
+      ["reference-key component order did not affect the key"],
+      []
+    ),
+    IF(
+      null_reference_key IS NOT NULL,
+      ["a null reference component produced a key"],
+      []
+    ),
+    IF(
+      NOT REGEXP_CONTAINS(
+        first_reference_key,
+        r"^[0-9A-Fa-f]{64}$"
+      ),
+      ["generated reference key is not a 64-character hexadecimal SHA-256 value"],
       []
     )
   )
