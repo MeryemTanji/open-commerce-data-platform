@@ -1,0 +1,17 @@
+config {
+  type: "table",
+  schema: "canonical",
+  name: "int_order_review_summary",
+  description: "Internal one-row-per-order summary of distinct staged Olist order-review associations.",
+  tags: ["canonical", "olist", "intermediate"],
+  columns: {
+    source_order_id: "Preserved source order_id and summary grain.",
+    review_association_count: "Number of distinct staged order-review associations."
+  }
+}
+
+SELECT
+  order_id AS source_order_id,
+  COUNT(DISTINCT review_id) AS review_association_count
+FROM ${ref("stg_reviews")}
+GROUP BY order_id

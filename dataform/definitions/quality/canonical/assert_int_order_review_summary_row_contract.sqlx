@@ -1,0 +1,13 @@
+config {
+  type: "assertion",
+  schema: "canonical",
+  name: "assert_int_order_review_summary_row_contract",
+  description: "Fails when an order-review association count is null or invalid."
+}
+
+SELECT
+  *
+FROM ${ref("int_order_review_summary")}
+WHERE
+  review_association_count IS NULL
+  OR review_association_count < 1

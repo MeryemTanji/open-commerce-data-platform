@@ -1,0 +1,29 @@
+config {
+  type: "assertion",
+  schema: "canonical",
+  name: "assert_int_order_review_summary_source_reconciliation",
+  description: "Fails when the canonical review summary loses an order or disagrees with distinct staged order-review associations."
+}
+
+WITH expected_summary AS (
+  SELECT
+    order_id AS source_order_id,
+    COUNT(DISTINCT review_id)
+      AS review_association_count
+  FROM ${ref("stg_reviews")}
+  GROUP BY order_id
+)
+
+SELECT
+  COALESCE(
+    actual.source_order_id,
+    expected.source_order_id
+  ) AS source_order_id
+FROM expected_summary AS expected
+FULL OUTER JOIN ${ref("int_order_review_summary")} AS actual
+  USING (source_order_id)
+WHERE
+  actual.source_order_id IS NULL
+  OR expected.source_order_id IS NULL
+  OR actual.review_association_count
+    IS DISTINCT FROM expected.review_association_count
