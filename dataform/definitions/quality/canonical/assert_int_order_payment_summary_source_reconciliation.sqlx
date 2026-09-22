@@ -1,0 +1,31 @@
+config {
+  type: "assertion",
+  schema: "canonical",
+  name: "assert_int_order_payment_summary_source_reconciliation",
+  description: "Fails when the canonical payment summary loses an order or disagrees with independently aggregated staged payment evidence."
+}
+
+WITH expected_summary AS (
+  SELECT
+    order_id AS source_order_id,
+    COUNT(*) AS payment_count,
+    SUM(payment_value) AS payment_total
+  FROM ${ref("stg_payments")}
+  GROUP BY order_id
+)
+
+SELECT
+  COALESCE(
+    actual.source_order_id,
+    expected.source_order_id
+  ) AS source_order_id
+FROM expected_summary AS expected
+FULL OUTER JOIN ${ref("int_order_payment_summary")} AS actual
+  USING (source_order_id)
+WHERE
+  actual.source_order_id IS NULL
+  OR expected.source_order_id IS NULL
+  OR actual.payment_count
+    IS DISTINCT FROM expected.payment_count
+  OR actual.payment_total
+    IS DISTINCT FROM expected.payment_total

@@ -1,0 +1,15 @@
+config {
+  type: "assertion",
+  schema: "canonical",
+  name: "assert_int_order_payment_summary_row_contract",
+  description: "Fails when order-payment counts or monetary summaries are null or invalid."
+}
+
+SELECT
+  *
+FROM ${ref("int_order_payment_summary")}
+WHERE
+  payment_count IS NULL
+  OR payment_total IS NULL
+  OR payment_count < 1
+  OR payment_total < 0
