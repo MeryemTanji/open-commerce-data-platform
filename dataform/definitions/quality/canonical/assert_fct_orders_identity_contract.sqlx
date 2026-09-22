@@ -1,0 +1,32 @@
+config {
+  type: "assertion",
+  schema: "canonical",
+  name: "assert_fct_orders_identity_contract",
+  description: "Blocks publication when canonical order identity is inconsistent with its governed source namespace, source identifier, or deterministic key generation.",
+  dependencies: ["fct_orders"]
+}
+
+SELECT
+  o.*
+FROM ${ref("fct_orders")} AS o
+LEFT JOIN ${ref("stg_orders")} AS s
+  ON o.source_order_id = s.order_id
+WHERE
+  s.order_id IS NULL
+
+  OR o.source_namespace != "olist"
+
+  OR o.order_key
+    != TO_HEX(
+      SHA256(
+        TO_JSON_STRING(
+          STRUCT(
+            "v1" AS key_version,
+            "order" AS entity_type,
+            "olist" AS source_namespace,
+            CAST(o.source_order_id AS STRING)
+              AS source_identifier_1
+          )
+        )
+      )
+    )

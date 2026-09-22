@@ -1,0 +1,75 @@
+config {
+  type: "assertion",
+  schema: "canonical",
+  name: "assert_fct_orders_grain",
+  description: "Blocks publication when the canonical order fact violates its declared grain or fails to preserve the staged order population.",
+  dependencies: ["fct_orders"]
+}
+
+WITH metrics AS (
+  SELECT
+    (SELECT COUNT(*) FROM ${ref("stg_orders")})
+      AS staged_row_count,
+
+    (SELECT COUNT(*) FROM ${ref("fct_orders")})
+      AS canonical_row_count,
+
+    (
+      SELECT COUNT(*)
+      FROM ${ref("fct_orders")}
+      WHERE
+        order_key IS NULL
+        OR source_namespace IS NULL
+        OR source_order_id IS NULL
+    ) AS rows_with_null_identity,
+
+    (
+      SELECT COUNT(*)
+      FROM (
+        SELECT order_key
+        FROM ${ref("fct_orders")}
+        GROUP BY order_key
+        HAVING COUNT(*) > 1
+      )
+    ) AS duplicate_order_keys,
+
+    (
+      SELECT COUNT(*)
+      FROM (
+        SELECT
+          source_namespace,
+          source_order_id
+        FROM ${ref("fct_orders")}
+        GROUP BY
+          source_namespace,
+          source_order_id
+        HAVING COUNT(*) > 1
+      )
+    ) AS duplicate_source_order_ids
+)
+
+SELECT
+  failure_reason,
+  affected_row_count
+FROM metrics
+CROSS JOIN UNNEST([
+  STRUCT(
+    "canonical row count differs from staged order count"
+      AS failure_reason,
+    ABS(canonical_row_count - staged_row_count)
+      AS affected_row_count
+  ),
+  STRUCT(
+    "required order identity column is null",
+    rows_with_null_identity
+  ),
+  STRUCT(
+    "canonical order key is duplicated",
+    duplicate_order_keys
+  ),
+  STRUCT(
+    "source order identity is duplicated",
+    duplicate_source_order_ids
+  )
+])
+WHERE affected_row_count > 0

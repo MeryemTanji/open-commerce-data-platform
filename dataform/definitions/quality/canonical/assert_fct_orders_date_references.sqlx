@@ -1,0 +1,73 @@
+config {
+  type: "assertion",
+  schema: "canonical",
+  name: "assert_fct_orders_date_references",
+  description: "Blocks publication when order date keys are missing, inconsistent with their source temporal values, or absent from the canonical date dimension.",
+  dependencies: ["fct_orders"]
+}
+
+SELECT
+  o.*
+FROM ${ref("fct_orders")} AS o
+LEFT JOIN ${ref("dim_date")} AS purchase_date
+  ON o.purchase_date_key = purchase_date.date_key
+LEFT JOIN ${ref("dim_date")} AS approval_date
+  ON o.approval_date_key = approval_date.date_key
+LEFT JOIN ${ref("dim_date")} AS carrier_date
+  ON o.carrier_delivery_date_key = carrier_date.date_key
+LEFT JOIN ${ref("dim_date")} AS customer_date
+  ON o.customer_delivery_date_key = customer_date.date_key
+LEFT JOIN ${ref("dim_date")} AS estimated_date
+  ON o.estimated_delivery_date_key = estimated_date.date_key
+WHERE
+  o.purchase_date_key IS NULL
+  OR purchase_date.date_key IS NULL
+  OR o.purchase_date_key
+    != DATE(o.order_purchase_timestamp, "UTC")
+
+  OR o.estimated_delivery_date_key IS NULL
+  OR estimated_date.date_key IS NULL
+  OR o.estimated_delivery_date_key
+    != o.order_estimated_delivery_date
+
+  OR (
+    o.order_approved_timestamp IS NULL
+    AND o.approval_date_key IS NOT NULL
+  )
+  OR (
+    o.order_approved_timestamp IS NOT NULL
+    AND (
+      o.approval_date_key IS NULL
+      OR approval_date.date_key IS NULL
+      OR o.approval_date_key
+        != DATE(o.order_approved_timestamp, "UTC")
+    )
+  )
+
+  OR (
+    o.order_delivered_carrier_timestamp IS NULL
+    AND o.carrier_delivery_date_key IS NOT NULL
+  )
+  OR (
+    o.order_delivered_carrier_timestamp IS NOT NULL
+    AND (
+      o.carrier_delivery_date_key IS NULL
+      OR carrier_date.date_key IS NULL
+      OR o.carrier_delivery_date_key
+        != DATE(o.order_delivered_carrier_timestamp, "UTC")
+    )
+  )
+
+  OR (
+    o.order_delivered_customer_timestamp IS NULL
+    AND o.customer_delivery_date_key IS NOT NULL
+  )
+  OR (
+    o.order_delivered_customer_timestamp IS NOT NULL
+    AND (
+      o.customer_delivery_date_key IS NULL
+      OR customer_date.date_key IS NULL
+      OR o.customer_delivery_date_key
+        != DATE(o.order_delivered_customer_timestamp, "UTC")
+    )
+  )

@@ -1,0 +1,340 @@
+config {
+  type: "table",
+  schema: "canonical",
+  name: "fct_orders",
+  description: "Canonical Olist orders preserving lifecycle, customer context, governed anomaly indicators, and independently aggregated child-process summaries.",
+  tags: ["canonical", "olist", "fact"],
+  dependencies: ["dim_date"],
+  columns: {
+    order_key: "Deterministic canonical primary key for the order.",
+    source_namespace: "Stable namespace identifying the originating source instance.",
+    source_order_id: "Preserved source order_id.",
+    order_status: "Normalized source lifecycle status.",
+    order_purchase_timestamp: "Preserved purchase timestamp.",
+    order_approved_timestamp: "Preserved nullable approval timestamp.",
+    order_delivered_carrier_timestamp: "Preserved nullable carrier-delivery timestamp.",
+    order_delivered_customer_timestamp: "Preserved nullable customer-delivery timestamp.",
+    order_estimated_delivery_date: "Preserved estimated-delivery date.",
+    purchase_date_key: "Purchase-date foreign key to dim_date.",
+    approval_date_key: "Nullable approval-date foreign key to dim_date.",
+    carrier_delivery_date_key: "Nullable carrier-delivery-date foreign key to dim_date.",
+    customer_delivery_date_key: "Nullable customer-delivery-date foreign key to dim_date.",
+    estimated_delivery_date_key: "Estimated-delivery-date foreign key to dim_date.",
+    customer_key: "Nullable foreign key to the persistent canonical customer.",
+    source_customer_record_id: "Preserved order-specific source customer_id.",
+    customer_location_key: "Nullable foreign key to the order-context canonical location.",
+    customer_source_postal_code_prefix: "Postal-code prefix from the staged customer record.",
+    customer_source_city: "Normalized city from the staged customer record.",
+    customer_source_state: "Normalized state from the staged customer record.",
+    customer_reference_status: "Result of customer identity resolution.",
+    is_carrier_before_purchase: "Indicates carrier delivery before purchase.",
+    is_customer_before_carrier: "Indicates customer delivery before carrier delivery.",
+    is_delivered_missing_approval: "Indicates a delivered order without approval.",
+    is_delivered_missing_carrier_delivery: "Indicates a delivered order without carrier delivery.",
+    is_delivered_missing_customer_delivery: "Indicates a delivered order without customer delivery.",
+    has_lifecycle_anomaly: "Indicates at least one governed lifecycle anomaly.",
+    purchase_to_approval_seconds: "Seconds from purchase to approval when chronology is valid.",
+    purchase_to_carrier_delivery_seconds: "Seconds from purchase to carrier delivery when chronology is valid.",
+    carrier_to_customer_delivery_seconds: "Seconds from carrier to customer delivery when chronology is valid.",
+    purchase_to_customer_delivery_seconds: "Seconds from purchase to customer delivery when chronology is valid.",
+    delivery_date_variance_days: "Actual customer-delivery date minus estimated-delivery date.",
+    item_count: "Number of staged order-item observations.",
+    distinct_product_count: "Number of distinct source product identifiers.",
+    distinct_seller_count: "Number of distinct source seller identifiers.",
+    item_price_total: "Sum of item-level unit prices.",
+    freight_total: "Sum of item-level freight values.",
+    item_based_order_total: "Sum of item prices and freight values.",
+    payment_count: "Number of staged payment observations.",
+    payment_total: "Sum of payment values.",
+    review_association_count: "Number of distinct staged order-review associations.",
+    has_items: "Indicates whether item evidence exists.",
+    has_payments: "Indicates whether payment evidence exists.",
+    has_reviews: "Indicates whether review-association evidence exists.",
+    item_coverage_status: "Governed item-coverage classification.",
+    payment_coverage_status: "Governed payment-coverage classification.",
+    review_coverage_status: "Governed review-coverage classification.",
+    order_value_difference: "Signed payment total minus item-based order total.",
+    order_value_absolute_difference: "Absolute order-value reconciliation difference.",
+    order_value_reconciliation_status: "Governed item-to-payment reconciliation classification."
+  }
+}
+
+WITH customer_record_usage AS (
+  SELECT
+    customer_id,
+    COUNT(*) AS order_count
+  FROM ${ref("stg_orders")}
+  GROUP BY customer_id
+),
+
+orders_with_context AS (
+  SELECT
+    ${canonical_keys.generateCanonicalKey({
+      entityType: "order",
+      sourceNamespace: "olist",
+      sourceIdentifiers: ["orders.order_id"]
+    })} AS order_key,
+    "olist" AS source_namespace,
+    orders.order_id AS source_order_id,
+    orders.order_status,
+    orders.order_purchase_timestamp,
+    orders.order_approved_timestamp,
+    orders.order_delivered_carrier_timestamp,
+    orders.order_delivered_customer_timestamp,
+    orders.order_estimated_delivery_date,
+    DATE(
+      orders.order_purchase_timestamp,
+      "UTC"
+    ) AS purchase_date_key,
+    DATE(
+      orders.order_approved_timestamp,
+      "UTC"
+    ) AS approval_date_key,
+    DATE(
+      orders.order_delivered_carrier_timestamp,
+      "UTC"
+    ) AS carrier_delivery_date_key,
+    DATE(
+      orders.order_delivered_customer_timestamp,
+      "UTC"
+    ) AS customer_delivery_date_key,
+    orders.order_estimated_delivery_date
+      AS estimated_delivery_date_key,
+    customer_dimension.customer_key,
+    orders.customer_id AS source_customer_record_id,
+    location.location_key AS customer_location_key,
+    customer.customer_zip_code_prefix
+      AS customer_source_postal_code_prefix,
+    customer.customer_city AS customer_source_city,
+    customer.customer_state AS customer_source_state,
+    CASE
+      WHEN customer.customer_id IS NULL
+        THEN "missing_customer"
+      WHEN customer_usage.order_count > 1
+        THEN "reused_customer_record"
+      ELSE "matched"
+    END AS customer_reference_status,
+    (
+      orders.order_delivered_carrier_timestamp IS NOT NULL
+      AND orders.order_delivered_carrier_timestamp <
+        orders.order_purchase_timestamp
+    ) AS is_carrier_before_purchase,
+    (
+      orders.order_delivered_customer_timestamp IS NOT NULL
+      AND orders.order_delivered_carrier_timestamp IS NOT NULL
+      AND orders.order_delivered_customer_timestamp <
+        orders.order_delivered_carrier_timestamp
+    ) AS is_customer_before_carrier,
+    (
+      orders.order_status = "delivered"
+      AND orders.order_approved_timestamp IS NULL
+    ) AS is_delivered_missing_approval,
+    (
+      orders.order_status = "delivered"
+      AND orders.order_delivered_carrier_timestamp IS NULL
+    ) AS is_delivered_missing_carrier_delivery,
+    (
+      orders.order_status = "delivered"
+      AND orders.order_delivered_customer_timestamp IS NULL
+    ) AS is_delivered_missing_customer_delivery,
+    COALESCE(item_summary.item_count, 0) AS item_count,
+    COALESCE(
+      item_summary.distinct_product_count,
+      0
+    ) AS distinct_product_count,
+    COALESCE(
+      item_summary.distinct_seller_count,
+      0
+    ) AS distinct_seller_count,
+    item_summary.item_price_total,
+    item_summary.freight_total,
+    item_summary.item_based_order_total,
+    COALESCE(
+      payment_summary.payment_count,
+      0
+    ) AS payment_count,
+    payment_summary.payment_total,
+    COALESCE(
+      review_summary.review_association_count,
+      0
+    ) AS review_association_count,
+    item_summary.source_order_id IS NOT NULL AS has_items,
+    payment_summary.source_order_id IS NOT NULL AS has_payments,
+    review_summary.source_order_id IS NOT NULL AS has_reviews
+  FROM ${ref("stg_orders")} AS orders
+  LEFT JOIN ${ref("stg_customers")} AS customer
+    ON orders.customer_id = customer.customer_id
+  LEFT JOIN customer_record_usage AS customer_usage
+    ON orders.customer_id = customer_usage.customer_id
+  LEFT JOIN ${ref("dim_customer")} AS customer_dimension
+    ON customer_dimension.source_namespace = "olist"
+    AND customer_dimension.source_customer_id =
+      customer.customer_unique_id
+  LEFT JOIN ${ref("dim_location")} AS location
+    ON location.country_code = "BR"
+    AND location.postal_code_prefix =
+      customer.customer_zip_code_prefix
+  LEFT JOIN ${ref("int_order_item_summary")} AS item_summary
+    ON orders.order_id = item_summary.source_order_id
+  LEFT JOIN ${ref("int_order_payment_summary")} AS payment_summary
+    ON orders.order_id = payment_summary.source_order_id
+  LEFT JOIN ${ref("int_order_review_summary")} AS review_summary
+    ON orders.order_id = review_summary.source_order_id
+),
+
+orders_with_classifications AS (
+  SELECT
+    *,
+    (
+      is_carrier_before_purchase
+      OR is_customer_before_carrier
+      OR is_delivered_missing_approval
+      OR is_delivered_missing_carrier_delivery
+      OR is_delivered_missing_customer_delivery
+    ) AS has_lifecycle_anomaly,
+    CASE
+      WHEN has_items
+        THEN "present"
+      WHEN order_status IN (
+        "created",
+        "canceled",
+        "unavailable"
+      )
+        THEN "absent_status_consistent"
+      ELSE "absent_requires_review"
+    END AS item_coverage_status,
+    CASE
+      WHEN has_payments
+        THEN "present"
+      WHEN order_status IN (
+        "created",
+        "canceled",
+        "unavailable"
+      )
+        THEN "absent_status_consistent"
+      ELSE "absent_requires_review"
+    END AS payment_coverage_status,
+    CASE
+      WHEN has_reviews
+        THEN "present"
+      ELSE "absent"
+    END AS review_coverage_status
+  FROM orders_with_context
+)
+
+SELECT
+  order_key,
+  source_namespace,
+  source_order_id,
+  order_status,
+  order_purchase_timestamp,
+  order_approved_timestamp,
+  order_delivered_carrier_timestamp,
+  order_delivered_customer_timestamp,
+  order_estimated_delivery_date,
+  purchase_date_key,
+  approval_date_key,
+  carrier_delivery_date_key,
+  customer_delivery_date_key,
+  estimated_delivery_date_key,
+  customer_key,
+  source_customer_record_id,
+  customer_location_key,
+  customer_source_postal_code_prefix,
+  customer_source_city,
+  customer_source_state,
+  customer_reference_status,
+  is_carrier_before_purchase,
+  is_customer_before_carrier,
+  is_delivered_missing_approval,
+  is_delivered_missing_carrier_delivery,
+  is_delivered_missing_customer_delivery,
+  has_lifecycle_anomaly,
+  CASE
+    WHEN order_approved_timestamp IS NOT NULL
+      AND order_approved_timestamp >= order_purchase_timestamp
+      THEN TIMESTAMP_DIFF(
+        order_approved_timestamp,
+        order_purchase_timestamp,
+        SECOND
+      )
+  END AS purchase_to_approval_seconds,
+  CASE
+    WHEN order_delivered_carrier_timestamp IS NOT NULL
+      AND order_delivered_carrier_timestamp >=
+        order_purchase_timestamp
+      THEN TIMESTAMP_DIFF(
+        order_delivered_carrier_timestamp,
+        order_purchase_timestamp,
+        SECOND
+      )
+  END AS purchase_to_carrier_delivery_seconds,
+  CASE
+    WHEN order_delivered_customer_timestamp IS NOT NULL
+      AND order_delivered_carrier_timestamp IS NOT NULL
+      AND order_delivered_customer_timestamp >=
+        order_delivered_carrier_timestamp
+      THEN TIMESTAMP_DIFF(
+        order_delivered_customer_timestamp,
+        order_delivered_carrier_timestamp,
+        SECOND
+      )
+  END AS carrier_to_customer_delivery_seconds,
+  CASE
+    WHEN order_delivered_customer_timestamp IS NOT NULL
+      AND order_delivered_customer_timestamp >=
+        order_purchase_timestamp
+      THEN TIMESTAMP_DIFF(
+        order_delivered_customer_timestamp,
+        order_purchase_timestamp,
+        SECOND
+      )
+  END AS purchase_to_customer_delivery_seconds,
+  CASE
+    WHEN order_delivered_customer_timestamp IS NOT NULL
+      THEN DATE_DIFF(
+        DATE(
+          order_delivered_customer_timestamp,
+          "UTC"
+        ),
+        order_estimated_delivery_date,
+        DAY
+      )
+  END AS delivery_date_variance_days,
+  item_count,
+  distinct_product_count,
+  distinct_seller_count,
+  item_price_total,
+  freight_total,
+  item_based_order_total,
+  payment_count,
+  payment_total,
+  review_association_count,
+  has_items,
+  has_payments,
+  has_reviews,
+  item_coverage_status,
+  payment_coverage_status,
+  review_coverage_status,
+  payment_total - item_based_order_total
+    AS order_value_difference,
+  ABS(
+    payment_total - item_based_order_total
+  ) AS order_value_absolute_difference,
+  CASE
+    WHEN item_based_order_total IS NULL
+      AND payment_total IS NULL
+      THEN "not_comparable_missing_both"
+    WHEN item_based_order_total IS NULL
+      THEN "not_comparable_missing_items"
+    WHEN payment_total IS NULL
+      THEN "not_comparable_missing_payments"
+    WHEN ABS(
+      payment_total - item_based_order_total
+    ) <= 0.01
+      THEN "reconciled"
+    WHEN payment_total > item_based_order_total
+      THEN "payment_above_item_total"
+    ELSE "payment_below_item_total"
+  END AS order_value_reconciliation_status
+FROM orders_with_classifications

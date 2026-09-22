@@ -1,0 +1,51 @@
+config {
+  type: "assertion",
+  schema: "canonical",
+  name: "assert_fct_orders_customer_references",
+  description: "Blocks publication when order-to-customer resolution or order-context location references violate the canonical contract.",
+  dependencies: ["fct_orders"]
+}
+
+SELECT
+  o.*
+FROM ${ref("fct_orders")} AS o
+LEFT JOIN ${ref("dim_customer")} AS c
+  ON o.customer_key = c.customer_key
+LEFT JOIN ${ref("dim_location")} AS l
+  ON o.customer_location_key = l.location_key
+WHERE
+  o.customer_reference_status NOT IN (
+    "matched",
+    "missing_customer",
+    "reused_customer_record"
+  )
+
+  OR o.source_customer_record_id IS NULL
+
+  OR (
+    o.customer_reference_status = "matched"
+    AND (
+      o.customer_key IS NULL
+      OR c.customer_key IS NULL
+      OR o.customer_location_key IS NULL
+      OR l.location_key IS NULL
+    )
+  )
+
+  OR (
+    o.customer_reference_status = "reused_customer_record"
+    AND (
+      o.customer_key IS NULL
+      OR c.customer_key IS NULL
+      OR o.customer_location_key IS NULL
+      OR l.location_key IS NULL
+    )
+  )
+
+  OR (
+    o.customer_reference_status = "missing_customer"
+    AND (
+      o.customer_key IS NOT NULL
+      OR o.customer_location_key IS NOT NULL
+    )
+  )

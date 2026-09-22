@@ -1,0 +1,34 @@
+config {
+  type: "assertion",
+  schema: "canonical",
+  name: "assert_fct_orders_value_reconciliation",
+  description: "Blocks publication when an order's item and payment totals do not agree with its governed reconciliation classification.",
+  dependencies: ["fct_orders"]
+}
+
+SELECT
+  *
+FROM ${ref("fct_orders")}
+WHERE
+  order_value_reconciliation_status
+    != CASE
+      WHEN item_based_order_total IS NULL
+        AND payment_total IS NULL
+        THEN "not_comparable_missing_both"
+
+      WHEN item_based_order_total IS NULL
+        THEN "not_comparable_missing_items"
+
+      WHEN payment_total IS NULL
+        THEN "not_comparable_missing_payments"
+
+      WHEN ABS(
+        payment_total - item_based_order_total
+      ) <= 0.01
+        THEN "reconciled"
+
+      WHEN payment_total > item_based_order_total
+        THEN "payment_above_item_total"
+
+      ELSE "payment_below_item_total"
+    END

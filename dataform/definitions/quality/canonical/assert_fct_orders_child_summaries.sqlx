@@ -1,0 +1,96 @@
+config {
+  type: "assertion",
+  schema: "canonical",
+  name: "assert_fct_orders_child_summaries",
+  description: "Blocks publication when independently aggregated item, payment, or review summaries violate the canonical order contract.",
+  dependencies: ["fct_orders"]
+}
+
+SELECT
+  *
+FROM ${ref("fct_orders")}
+WHERE
+  item_count IS NULL
+  OR distinct_product_count IS NULL
+  OR distinct_seller_count IS NULL
+  OR payment_count IS NULL
+  OR review_association_count IS NULL
+
+  OR item_count < 0
+  OR distinct_product_count < 0
+  OR distinct_seller_count < 0
+  OR payment_count < 0
+  OR review_association_count < 0
+
+  OR has_items IS NULL
+  OR has_payments IS NULL
+  OR has_reviews IS NULL
+
+  OR has_items != (item_count > 0)
+  OR has_payments != (payment_count > 0)
+  OR has_reviews != (review_association_count > 0)
+
+  OR (
+    item_count = 0
+    AND (
+      item_price_total IS NOT NULL
+      OR freight_total IS NOT NULL
+      OR item_based_order_total IS NOT NULL
+    )
+  )
+
+  OR (
+    item_count > 0
+    AND (
+      item_price_total IS NULL
+      OR freight_total IS NULL
+      OR item_based_order_total IS NULL
+      OR ABS(
+        item_based_order_total
+          - (item_price_total + freight_total)
+      ) > 0.01
+    )
+  )
+
+  OR (
+    payment_count = 0
+    AND payment_total IS NOT NULL
+  )
+
+  OR (
+    payment_count > 0
+    AND payment_total IS NULL
+  )
+
+  OR item_coverage_status
+    != CASE
+      WHEN item_count > 0
+        THEN "present"
+      WHEN order_status IN (
+        "created",
+        "canceled",
+        "unavailable"
+      )
+        THEN "absent_status_consistent"
+      ELSE "absent_requires_review"
+    END
+
+  OR payment_coverage_status
+    != CASE
+      WHEN payment_count > 0
+        THEN "present"
+      WHEN order_status IN (
+        "created",
+        "canceled",
+        "unavailable"
+      )
+        THEN "absent_status_consistent"
+      ELSE "absent_requires_review"
+    END
+
+  OR review_coverage_status
+    != CASE
+      WHEN review_association_count > 0
+        THEN "present"
+      ELSE "absent"
+    END

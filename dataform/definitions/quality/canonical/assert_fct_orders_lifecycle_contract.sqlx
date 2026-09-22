@@ -1,0 +1,127 @@
+config {
+  type: "assertion",
+  schema: "canonical",
+  name: "assert_fct_orders_lifecycle_contract",
+  description: "Blocks publication when order lifecycle flags or governed duration calculations are inconsistent with preserved source timestamps.",
+  dependencies: ["fct_orders"]
+}
+
+SELECT
+  *
+FROM ${ref("fct_orders")}
+WHERE
+  is_carrier_before_purchase IS NULL
+  OR is_customer_before_carrier IS NULL
+  OR is_delivered_missing_approval IS NULL
+  OR is_delivered_missing_carrier_delivery IS NULL
+  OR is_delivered_missing_customer_delivery IS NULL
+  OR has_lifecycle_anomaly IS NULL
+
+  OR is_carrier_before_purchase
+    != COALESCE(
+      order_delivered_carrier_timestamp
+        < order_purchase_timestamp,
+      FALSE
+    )
+
+  OR is_customer_before_carrier
+    != COALESCE(
+      order_delivered_customer_timestamp
+        < order_delivered_carrier_timestamp,
+      FALSE
+    )
+
+  OR is_delivered_missing_approval
+    != (
+      order_status = "delivered"
+      AND order_approved_timestamp IS NULL
+    )
+
+  OR is_delivered_missing_carrier_delivery
+    != (
+      order_status = "delivered"
+      AND order_delivered_carrier_timestamp IS NULL
+    )
+
+  OR is_delivered_missing_customer_delivery
+    != (
+      order_status = "delivered"
+      AND order_delivered_customer_timestamp IS NULL
+    )
+
+  OR has_lifecycle_anomaly
+    != (
+      is_carrier_before_purchase
+      OR is_customer_before_carrier
+      OR is_delivered_missing_approval
+      OR is_delivered_missing_carrier_delivery
+      OR is_delivered_missing_customer_delivery
+    )
+
+  OR (
+    purchase_to_approval_seconds IS NOT NULL
+    AND (
+      order_approved_timestamp IS NULL
+      OR purchase_to_approval_seconds
+        != TIMESTAMP_DIFF(
+          order_approved_timestamp,
+          order_purchase_timestamp,
+          SECOND
+        )
+    )
+  )
+
+  OR (
+    purchase_to_carrier_delivery_seconds IS NOT NULL
+    AND (
+      order_delivered_carrier_timestamp IS NULL
+      OR is_carrier_before_purchase
+      OR purchase_to_carrier_delivery_seconds
+        != TIMESTAMP_DIFF(
+          order_delivered_carrier_timestamp,
+          order_purchase_timestamp,
+          SECOND
+        )
+    )
+  )
+
+  OR (
+    carrier_to_customer_delivery_seconds IS NOT NULL
+    AND (
+      order_delivered_carrier_timestamp IS NULL
+      OR order_delivered_customer_timestamp IS NULL
+      OR is_customer_before_carrier
+      OR carrier_to_customer_delivery_seconds
+        != TIMESTAMP_DIFF(
+          order_delivered_customer_timestamp,
+          order_delivered_carrier_timestamp,
+          SECOND
+        )
+    )
+  )
+
+  OR (
+    purchase_to_customer_delivery_seconds IS NOT NULL
+    AND (
+      order_delivered_customer_timestamp IS NULL
+      OR purchase_to_customer_delivery_seconds
+        != TIMESTAMP_DIFF(
+          order_delivered_customer_timestamp,
+          order_purchase_timestamp,
+          SECOND
+        )
+    )
+  )
+
+  OR (
+    delivery_date_variance_days IS NOT NULL
+    AND (
+      order_delivered_customer_timestamp IS NULL
+      OR delivery_date_variance_days
+        != DATE_DIFF(
+          DATE(order_delivered_customer_timestamp, "UTC"),
+          order_estimated_delivery_date,
+          DAY
+        )
+    )
+  )
