@@ -1,0 +1,27 @@
+config {
+  type: "table",
+  schema: "canonical",
+  name: "int_order_item_summary",
+  description: "Internal one-row-per-order summary of staged Olist order-item counts and monetary measures.",
+  tags: ["canonical", "olist", "intermediate"],
+  columns: {
+    source_order_id: "Preserved source order_id and summary grain.",
+    item_count: "Number of staged order-item observations.",
+    distinct_product_count: "Number of distinct source product identifiers.",
+    distinct_seller_count: "Number of distinct source seller identifiers.",
+    item_price_total: "Sum of item-level unit prices.",
+    freight_total: "Sum of item-level freight values.",
+    item_based_order_total: "Sum of item prices and freight values."
+  }
+}
+
+SELECT
+  order_id AS source_order_id,
+  COUNT(*) AS item_count,
+  COUNT(DISTINCT product_id) AS distinct_product_count,
+  COUNT(DISTINCT seller_id) AS distinct_seller_count,
+  SUM(price) AS item_price_total,
+  SUM(freight_value) AS freight_total,
+  SUM(price + freight_value) AS item_based_order_total
+FROM ${ref("stg_order_items")}
+GROUP BY order_id

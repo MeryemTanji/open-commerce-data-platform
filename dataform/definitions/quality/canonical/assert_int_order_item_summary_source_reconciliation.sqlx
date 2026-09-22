@@ -1,0 +1,43 @@
+config {
+  type: "assertion",
+  schema: "canonical",
+  name: "assert_int_order_item_summary_source_reconciliation",
+  description: "Fails when the canonical item summary loses an order or disagrees with independently aggregated staged item evidence."
+}
+
+WITH expected_summary AS (
+  SELECT
+    order_id AS source_order_id,
+    COUNT(*) AS item_count,
+    COUNT(DISTINCT product_id) AS distinct_product_count,
+    COUNT(DISTINCT seller_id) AS distinct_seller_count,
+    SUM(price) AS item_price_total,
+    SUM(freight_value) AS freight_total,
+    SUM(price + freight_value) AS item_based_order_total
+  FROM ${ref("stg_order_items")}
+  GROUP BY order_id
+)
+
+SELECT
+  COALESCE(
+    actual.source_order_id,
+    expected.source_order_id
+  ) AS source_order_id
+FROM expected_summary AS expected
+FULL OUTER JOIN ${ref("int_order_item_summary")} AS actual
+  USING (source_order_id)
+WHERE
+  actual.source_order_id IS NULL
+  OR expected.source_order_id IS NULL
+  OR actual.item_count
+    IS DISTINCT FROM expected.item_count
+  OR actual.distinct_product_count
+    IS DISTINCT FROM expected.distinct_product_count
+  OR actual.distinct_seller_count
+    IS DISTINCT FROM expected.distinct_seller_count
+  OR actual.item_price_total
+    IS DISTINCT FROM expected.item_price_total
+  OR actual.freight_total
+    IS DISTINCT FROM expected.freight_total
+  OR actual.item_based_order_total
+    IS DISTINCT FROM expected.item_based_order_total

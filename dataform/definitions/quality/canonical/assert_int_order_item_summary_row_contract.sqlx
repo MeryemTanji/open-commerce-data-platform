@@ -1,0 +1,27 @@
+config {
+  type: "assertion",
+  schema: "canonical",
+  name: "assert_int_order_item_summary_row_contract",
+  description: "Fails when order-item counts or monetary summaries are null, invalid, or internally inconsistent."
+}
+
+SELECT
+  *
+FROM ${ref("int_order_item_summary")}
+WHERE
+  item_count IS NULL
+  OR distinct_product_count IS NULL
+  OR distinct_seller_count IS NULL
+  OR item_price_total IS NULL
+  OR freight_total IS NULL
+  OR item_based_order_total IS NULL
+  OR item_count < 1
+  OR distinct_product_count < 1
+  OR distinct_product_count > item_count
+  OR distinct_seller_count < 1
+  OR distinct_seller_count > item_count
+  OR item_price_total < 0
+  OR freight_total < 0
+  OR item_based_order_total < 0
+  OR item_based_order_total
+    IS DISTINCT FROM item_price_total + freight_total

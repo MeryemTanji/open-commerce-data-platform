@@ -1,0 +1,15 @@
+config {
+  type: "assertion",
+  schema: "canonical",
+  name: "assert_int_order_item_summary_unique_key",
+  description: "Fails when the order-item summary contains a null or duplicated source order identifier."
+}
+
+SELECT
+  source_order_id,
+  COUNT(*) AS row_count
+FROM ${ref("int_order_item_summary")}
+GROUP BY source_order_id
+HAVING
+  source_order_id IS NULL
+  OR COUNT(*) > 1
