@@ -1,0 +1,25 @@
+config {
+  type: "assertion",
+  schema: "canonical",
+  name: "assert_fct_order_items_date_reference",
+  description: "Blocks publication when the required shipping-limit timestamp or its canonical date reference is missing or inconsistent.",
+  dependencies: ["fct_order_items"]
+}
+
+SELECT
+  items.*
+FROM ${ref("fct_order_items")} AS items
+
+LEFT JOIN ${ref("dim_date")} AS dates
+  ON items.shipping_limit_date_key = dates.date_key
+
+WHERE
+  items.shipping_limit_timestamp IS NULL
+  OR items.shipping_limit_date_key IS NULL
+  OR dates.date_key IS NULL
+
+  OR items.shipping_limit_date_key
+    != DATE(
+      items.shipping_limit_timestamp,
+      "UTC"
+    )

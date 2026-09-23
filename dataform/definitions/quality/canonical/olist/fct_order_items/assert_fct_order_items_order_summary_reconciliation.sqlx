@@ -1,0 +1,88 @@
+config {
+  type: "assertion",
+  schema: "canonical",
+  name: "assert_fct_order_items_order_summary_reconciliation",
+  description: "Blocks publication when aggregating the canonical order-item fact does not reproduce the governed order-item summary.",
+  dependencies: [
+    "fct_order_items",
+    "int_order_item_summary"
+  ]
+}
+
+WITH fact_summary AS (
+  SELECT
+    source_order_id,
+    COUNT(*) AS item_count,
+    COUNT(DISTINCT source_product_id)
+      AS distinct_product_count,
+    COUNT(DISTINCT source_seller_id)
+      AS distinct_seller_count,
+    SUM(unit_price) AS item_price_total,
+    SUM(freight_value) AS freight_total,
+    SUM(item_total_value) AS item_based_order_total
+  FROM ${ref("fct_order_items")}
+  GROUP BY source_order_id
+)
+
+SELECT
+  COALESCE(
+    intermediate.source_order_id,
+    fact.source_order_id
+  ) AS source_order_id,
+
+  intermediate.item_count
+    AS intermediate_item_count,
+  fact.item_count
+    AS fact_item_count,
+
+  intermediate.distinct_product_count
+    AS intermediate_distinct_product_count,
+  fact.distinct_product_count
+    AS fact_distinct_product_count,
+
+  intermediate.distinct_seller_count
+    AS intermediate_distinct_seller_count,
+  fact.distinct_seller_count
+    AS fact_distinct_seller_count,
+
+  intermediate.item_price_total
+    AS intermediate_item_price_total,
+  fact.item_price_total
+    AS fact_item_price_total,
+
+  intermediate.freight_total
+    AS intermediate_freight_total,
+  fact.freight_total
+    AS fact_freight_total,
+
+  intermediate.item_based_order_total
+    AS intermediate_item_based_order_total,
+  fact.item_based_order_total
+    AS fact_item_based_order_total
+
+FROM ${ref("int_order_item_summary")} AS intermediate
+
+FULL OUTER JOIN fact_summary AS fact
+  USING (source_order_id)
+
+WHERE
+  intermediate.source_order_id IS NULL
+  OR fact.source_order_id IS NULL
+
+  OR intermediate.item_count
+    IS DISTINCT FROM fact.item_count
+
+  OR intermediate.distinct_product_count
+    IS DISTINCT FROM fact.distinct_product_count
+
+  OR intermediate.distinct_seller_count
+    IS DISTINCT FROM fact.distinct_seller_count
+
+  OR intermediate.item_price_total
+    IS DISTINCT FROM fact.item_price_total
+
+  OR intermediate.freight_total
+    IS DISTINCT FROM fact.freight_total
+
+  OR intermediate.item_based_order_total
+    IS DISTINCT FROM fact.item_based_order_total

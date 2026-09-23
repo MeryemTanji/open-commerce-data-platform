@@ -1,0 +1,142 @@
+config {
+  type: "table",
+  schema: "canonical",
+  name: "fct_order_items",
+  description: "Canonical Olist order-item fact at one row per source order and order-item identifier.",
+  columns: {
+    order_item_key:
+      "Deterministic canonical primary key for the order-item observation.",
+    source_namespace:
+      "Stable namespace identifying the originating source instance.",
+    source_order_id:
+      "Preserved source order identifier.",
+    source_order_item_id:
+      "Preserved source order-item sequence identifier.",
+    order_key:
+      "Nullable foreign key to the canonical order.",
+    order_reference_status:
+      "Result of canonical order-reference resolution.",
+    product_key:
+      "Nullable foreign key to the canonical product.",
+    source_product_id:
+      "Preserved source product identifier.",
+    product_reference_status:
+      "Result of canonical product-reference resolution.",
+    seller_key:
+      "Nullable foreign key to the canonical seller.",
+    source_seller_id:
+      "Preserved source seller identifier.",
+    seller_reference_status:
+      "Result of canonical seller-reference resolution.",
+    shipping_limit_timestamp:
+      "Preserved source shipping-limit timestamp.",
+    shipping_limit_date_key:
+      "Role-specific foreign key to the canonical date dimension.",
+    unit_price:
+      "Preserved source unit price.",
+    freight_value:
+      "Preserved source freight value.",
+    item_total_value:
+      "Derived item value equal to unit price plus freight value."
+  }
+}
+
+WITH order_items AS (
+  SELECT
+    order_id,
+    order_item_id,
+    product_id,
+    seller_id,
+    shipping_limit_timestamp,
+    price,
+    freight_value
+  FROM ${ref("stg_order_items")}
+),
+
+resolved_items AS (
+  SELECT
+    ${canonical_keys.generateCanonicalKey({
+      entityType: "order_item",
+      sourceNamespace: "olist",
+      sourceIdentifiers: [
+        "items.order_id",
+        "items.order_item_id"
+      ]
+    })} AS order_item_key,
+
+    "olist" AS source_namespace,
+
+    items.order_id AS source_order_id,
+    items.order_item_id AS source_order_item_id,
+
+    orders.order_key,
+
+    CASE
+      WHEN orders.order_key IS NOT NULL
+        THEN "matched"
+      ELSE "missing_order"
+    END AS order_reference_status,
+
+    products.product_key,
+    items.product_id AS source_product_id,
+
+    CASE
+      WHEN products.product_key IS NOT NULL
+        THEN "matched"
+      ELSE "missing_product"
+    END AS product_reference_status,
+
+    sellers.seller_key,
+    items.seller_id AS source_seller_id,
+
+    CASE
+      WHEN sellers.seller_key IS NOT NULL
+        THEN "matched"
+      ELSE "missing_seller"
+    END AS seller_reference_status,
+
+    items.shipping_limit_timestamp,
+
+    DATE(
+      items.shipping_limit_timestamp,
+      "UTC"
+    ) AS shipping_limit_date_key,
+
+    items.price AS unit_price,
+    items.freight_value,
+
+    items.price
+      + items.freight_value
+      AS item_total_value
+
+  FROM order_items AS items
+
+  LEFT JOIN ${ref("fct_orders")} AS orders
+    ON items.order_id = orders.source_order_id
+
+  LEFT JOIN ${ref("dim_product")} AS products
+    ON items.product_id = products.source_product_id
+
+  LEFT JOIN ${ref("dim_seller")} AS sellers
+    ON items.seller_id = sellers.source_seller_id
+)
+
+SELECT
+  order_item_key,
+  source_namespace,
+  source_order_id,
+  source_order_item_id,
+  order_key,
+  order_reference_status,
+  product_key,
+  source_product_id,
+  product_reference_status,
+  seller_key,
+  source_seller_id,
+  seller_reference_status,
+  shipping_limit_timestamp,
+  shipping_limit_date_key,
+  unit_price,
+  freight_value,
+  item_total_value
+FROM resolved_items

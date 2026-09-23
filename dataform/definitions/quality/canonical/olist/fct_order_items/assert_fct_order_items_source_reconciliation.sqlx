@@ -1,0 +1,39 @@
+config {
+  type: "assertion",
+  schema: "canonical",
+  name: "assert_fct_order_items_source_reconciliation",
+  description: "Blocks publication when canonical order-item rows fail to preserve the complete staged source population and source values.",
+  dependencies: ["fct_order_items"]
+}
+
+SELECT
+  canonical.order_item_key,
+  canonical.source_order_id,
+  canonical.source_order_item_id,
+  staged.order_id AS staged_order_id,
+  staged.order_item_id AS staged_order_item_id
+FROM ${ref("fct_order_items")} AS canonical
+
+FULL OUTER JOIN ${ref("stg_order_items")} AS staged
+  ON canonical.source_order_id = staged.order_id
+  AND canonical.source_order_item_id
+    = staged.order_item_id
+
+WHERE
+  canonical.order_item_key IS NULL
+  OR staged.order_id IS NULL
+
+  OR canonical.source_product_id
+    IS DISTINCT FROM staged.product_id
+
+  OR canonical.source_seller_id
+    IS DISTINCT FROM staged.seller_id
+
+  OR canonical.shipping_limit_timestamp
+    IS DISTINCT FROM staged.shipping_limit_timestamp
+
+  OR canonical.unit_price
+    IS DISTINCT FROM staged.price
+
+  OR canonical.freight_value
+    IS DISTINCT FROM staged.freight_value

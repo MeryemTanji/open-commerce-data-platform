@@ -1,0 +1,81 @@
+config {
+  type: "assertion",
+  schema: "canonical",
+  name: "assert_fct_order_items_parent_references",
+  description: "Blocks publication when canonical order, product, or seller reference resolution violates the order-item contract.",
+  dependencies: ["fct_order_items"]
+}
+
+SELECT
+  items.*
+FROM ${ref("fct_order_items")} AS items
+
+LEFT JOIN ${ref("fct_orders")} AS orders
+  ON items.order_key = orders.order_key
+
+LEFT JOIN ${ref("dim_product")} AS products
+  ON items.product_key = products.product_key
+
+LEFT JOIN ${ref("dim_seller")} AS sellers
+  ON items.seller_key = sellers.seller_key
+
+WHERE
+  items.source_product_id IS NULL
+  OR items.source_seller_id IS NULL
+
+  OR items.order_reference_status IS NULL
+  OR items.order_reference_status NOT IN (
+    "matched",
+    "missing_order"
+  )
+
+  OR items.product_reference_status IS NULL
+  OR items.product_reference_status NOT IN (
+    "matched",
+    "missing_product"
+  )
+
+  OR items.seller_reference_status IS NULL
+  OR items.seller_reference_status NOT IN (
+    "matched",
+    "missing_seller"
+  )
+
+  OR (
+    items.order_reference_status = "matched"
+    AND (
+      items.order_key IS NULL
+      OR orders.order_key IS NULL
+    )
+  )
+
+  OR (
+    items.order_reference_status = "missing_order"
+    AND items.order_key IS NOT NULL
+  )
+
+  OR (
+    items.product_reference_status = "matched"
+    AND (
+      items.product_key IS NULL
+      OR products.product_key IS NULL
+    )
+  )
+
+  OR (
+    items.product_reference_status = "missing_product"
+    AND items.product_key IS NOT NULL
+  )
+
+  OR (
+    items.seller_reference_status = "matched"
+    AND (
+      items.seller_key IS NULL
+      OR sellers.seller_key IS NULL
+    )
+  )
+
+  OR (
+    items.seller_reference_status = "missing_seller"
+    AND items.seller_key IS NOT NULL
+  )
