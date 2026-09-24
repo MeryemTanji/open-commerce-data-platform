@@ -1236,7 +1236,7 @@ The initial `fct_reviews` columns include:
 | `review_score` | Preserved source review score |
 | `review_comment_title` | Preserved nullable review title |
 | `review_comment_message` | Preserved nullable review message |
-| `review_creation_timestamp` | Preserved review-creation timestamp |
+| `review_creation_date` | Preserved source review-creation date |
 | `review_answer_timestamp` | Preserved review-answer timestamp |
 | `review_creation_date_key` | Review-creation date key referencing `dim_date` |
 | `review_answer_date_key` | Review-answer date key referencing `dim_date` |
@@ -1266,7 +1266,7 @@ The governed payload includes:
 review_score
 review_comment_title
 review_comment_message
-review_creation_timestamp
+review_creation_date
 review_answer_timestamp
 ```
 
@@ -1330,45 +1330,35 @@ Text-derived sentiment, topic, language, or classification outputs belong in gov
 `fct_reviews` preserves:
 
 ```text
-review_creation_timestamp
+review_creation_date
 review_answer_timestamp
 ```
 
-The corresponding role-specific date keys are:
+The corresponding date roles are:
 
-| Date key                   | Derived from                |
-| -------------------------- | --------------------------- |
-| `review_creation_date_key` | `review_creation_timestamp` |
-| `review_answer_date_key`   | `review_answer_timestamp`   |
+| Date key                   | Derived from                          |
+| -------------------------- | ------------------------------------- |
+| `review_creation_date_key` | `review_creation_date`                |
+| `review_answer_date_key`   | UTC date of `review_answer_timestamp` |
 
-Both date keys reference `dim_date`.
+Both date keys reference dim_date.
 
-The timestamps remain the authoritative temporal values. Date keys support calendar-based analysis and do not replace timestamp precision.
+`review_creation_date_key` equals the preserved source `review_creation_date`.
 
-Review chronology is valid when:
+`review_answer_date_key` is derived as:
 
-```text
-review_answer_timestamp >= review_creation_timestamp
+```sql
+DATE(review_answer_timestamp, "UTC") < review_creation_date
 ```
 
-The response duration may be derived as:
+The initial canonical model does not publish a review-response duration. The creation field is available only as a calendar date, so calculating elapsed seconds would introduce unsupported time-of-day precision.
 
-```text
-review_response_seconds =
-    review_answer_timestamp - review_creation_timestamp
-```
+Mercury must not:
 
-It may be published only when both timestamps are available and their chronology is valid.
-
-When the answer timestamp precedes the creation timestamp:
-
-- both source-derived timestamps remain unchanged;
-- `is_answer_before_creation` is `TRUE`;
-- `review_response_seconds` is `NULL`;
-- the review and its order associations remain available;
-- analyses requiring valid response chronology must exclude or separately classify the review.
-
-Mercury must not alter either timestamp to create plausible chronology.
+- infer a review-creation time;
+- treat midnight as the observed creation time;
+- calculate a response duration from mixed date and timestamp precision;
+- alter either temporal value to repair invalid chronology.
 
 ### 4.7 Order-association behavior
 
@@ -1509,7 +1499,7 @@ The applicable review conditions receive the following canonical treatments:
 | `reused_review_ids_with_inconsistent_payloads` | Preserve source observations; prevent unreviewed consolidation |
 | `reused_review_ids_across_customers` | Preserve associations; prevent unreviewed customer-level use |
 | `reused_review_ids_across_purchase_dates` | Preserve all associations and expose cross-occasion reuse |
-| Review answer before review creation | Preserve both timestamps, flag the anomaly, and suppress the response duration |
+| Review answer before review creation | Preserve the creation date and answer timestamp, and flag the date-level chronology anomaly |
 | Missing review title or message | Retain the review; treat optional text absence as valid |
 
 Existing staging and relationship-quality controls remain responsible for monitoring changes to review chronology, identity, coverage, and reuse baselines.
@@ -1528,9 +1518,10 @@ Existing staging and relationship-quality controls remain responsible for monito
 - preservation of nullable review title and message values;
 - preservation of review creation and answer timestamps;
 - valid `dim_date` references for every populated review date key;
-- deterministic consistency between each timestamp and its date key;
-- non-negative `review_response_seconds` whenever the duration is published;
-- a `NULL` response duration whenever review chronology is invalid;
+- equality between `review_creation_date` and `review_creation_date_key`;
+- deterministic UTC derivation of `review_answer_date_key` from `review_answer_timestamp`;
+- consistency between `is_answer_before_creation` and the preserved temporal evidence;
+- absence of an inferred review-response duration;
 - non-null Boolean values for every governed review-quality indicator;
 - consistency between `order_association_count` and `is_reused_review_id`;
 - consistency between each anomaly indicator and its underlying evidence;
@@ -1545,7 +1536,7 @@ A blocking canonical control must fail if:
 - the implemented relation no longer conforms to its declared grain;
 - a required review identity or score is unavailable;
 - a populated date key does not resolve to `dim_date`;
-- a published response duration contradicts the source chronology;
+- a review chronology indicator contradicts the preserved creation date and answer timestamp;
 - review consolidation selects an arbitrary payload;
 - order-association processing multiplies or removes canonical review rows.
 
