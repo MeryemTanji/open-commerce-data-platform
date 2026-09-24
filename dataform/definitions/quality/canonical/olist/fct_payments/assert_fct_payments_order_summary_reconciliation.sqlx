@@ -1,0 +1,50 @@
+config {
+  type: "assertion",
+  schema: "canonical",
+  name: "assert_fct_payments_order_summary_reconciliation",
+  description: "Blocks publication when aggregating the canonical payment fact does not reproduce the governed order-payment summary.",
+  dependencies: [
+    "fct_payments",
+    "int_order_payment_summary"
+  ]
+}
+
+WITH fact_summary AS (
+  SELECT
+    source_order_id,
+    COUNT(*) AS payment_count,
+    SUM(payment_value) AS payment_total
+  FROM ${ref("fct_payments")}
+  GROUP BY source_order_id
+)
+
+SELECT
+  COALESCE(
+    intermediate.source_order_id,
+    fact.source_order_id
+  ) AS source_order_id,
+
+  intermediate.payment_count
+    AS intermediate_payment_count,
+  fact.payment_count
+    AS fact_payment_count,
+
+  intermediate.payment_total
+    AS intermediate_payment_total,
+  fact.payment_total
+    AS fact_payment_total
+
+FROM ${ref("int_order_payment_summary")} AS intermediate
+
+FULL OUTER JOIN fact_summary AS fact
+  USING (source_order_id)
+
+WHERE
+  intermediate.source_order_id IS NULL
+  OR fact.source_order_id IS NULL
+
+  OR intermediate.payment_count
+    IS DISTINCT FROM fact.payment_count
+
+  OR intermediate.payment_total
+    IS DISTINCT FROM fact.payment_total

@@ -1,0 +1,35 @@
+config {
+  type: "assertion",
+  schema: "canonical",
+  name: "assert_fct_payments_order_reference",
+  description: "Blocks publication when canonical payment-to-order resolution violates the governed reference contract.",
+  dependencies: ["fct_payments"]
+}
+
+SELECT
+  payments.*
+FROM ${ref("fct_payments")} AS payments
+
+LEFT JOIN ${ref("fct_orders")} AS orders
+  ON payments.order_key = orders.order_key
+
+WHERE
+  payments.order_reference_status IS NULL
+
+  OR payments.order_reference_status NOT IN (
+    "matched",
+    "missing_order"
+  )
+
+  OR (
+    payments.order_reference_status = "matched"
+    AND (
+      payments.order_key IS NULL
+      OR orders.order_key IS NULL
+    )
+  )
+
+  OR (
+    payments.order_reference_status = "missing_order"
+    AND payments.order_key IS NOT NULL
+  )

@@ -1,0 +1,35 @@
+config {
+  type: "assertion",
+  schema: "canonical",
+  name: "assert_fct_payments_source_reconciliation",
+  description: "Blocks publication when canonical payment rows fail to preserve the complete staged payment population and source values.",
+  dependencies: ["fct_payments"]
+}
+
+SELECT
+  canonical.payment_key,
+  canonical.source_order_id,
+  canonical.source_payment_sequence,
+  staged.order_id AS staged_order_id,
+  staged.payment_sequential
+    AS staged_payment_sequence
+
+FROM ${ref("fct_payments")} AS canonical
+
+FULL OUTER JOIN ${ref("stg_payments")} AS staged
+  ON canonical.source_order_id = staged.order_id
+  AND canonical.source_payment_sequence
+    = staged.payment_sequential
+
+WHERE
+  canonical.payment_key IS NULL
+  OR staged.order_id IS NULL
+
+  OR canonical.payment_type
+    IS DISTINCT FROM staged.payment_type
+
+  OR canonical.payment_installments
+    IS DISTINCT FROM staged.payment_installments
+
+  OR canonical.payment_value
+    IS DISTINCT FROM staged.payment_value

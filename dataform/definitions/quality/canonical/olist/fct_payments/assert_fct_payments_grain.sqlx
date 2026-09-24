@@ -1,0 +1,68 @@
+config {
+  type: "assertion",
+  schema: "canonical",
+  name: "assert_fct_payments_grain",
+  description: "Blocks publication when the canonical payment fact violates its declared identity or source grain.",
+  dependencies: ["fct_payments"]
+}
+
+WITH metrics AS (
+  SELECT
+    (
+      SELECT COUNT(*)
+      FROM ${ref("fct_payments")}
+      WHERE
+        payment_key IS NULL
+        OR source_namespace IS NULL
+        OR source_order_id IS NULL
+        OR source_payment_sequence IS NULL
+    ) AS rows_with_null_identity,
+
+    (
+      SELECT COUNT(*)
+      FROM (
+        SELECT payment_key
+        FROM ${ref("fct_payments")}
+        GROUP BY payment_key
+        HAVING COUNT(*) > 1
+      )
+    ) AS duplicate_payment_keys,
+
+    (
+      SELECT COUNT(*)
+      FROM (
+        SELECT
+          source_namespace,
+          source_order_id,
+          source_payment_sequence
+        FROM ${ref("fct_payments")}
+        GROUP BY
+          source_namespace,
+          source_order_id,
+          source_payment_sequence
+        HAVING COUNT(*) > 1
+      )
+    ) AS duplicate_source_payment_grains
+)
+
+SELECT
+  failure_reason,
+  affected_row_count
+FROM metrics
+CROSS JOIN UNNEST([
+  STRUCT(
+    "required payment identity column is null"
+      AS failure_reason,
+    rows_with_null_identity
+      AS affected_row_count
+  ),
+  STRUCT(
+    "canonical payment key is duplicated",
+    duplicate_payment_keys
+  ),
+  STRUCT(
+    "source payment grain is duplicated",
+    duplicate_source_payment_grains
+  )
+])
+WHERE affected_row_count > 0

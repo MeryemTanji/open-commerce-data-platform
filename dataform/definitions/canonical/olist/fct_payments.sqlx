@@ -1,0 +1,106 @@
+config {
+  type: "table",
+  schema: "canonical",
+  name: "fct_payments",
+  description: "Canonical Olist payment fact at one row per source order and payment sequence.",
+  columns: {
+    payment_key:
+      "Deterministic canonical primary key for the payment observation.",
+    source_namespace:
+      "Stable namespace identifying the originating source instance.",
+    source_order_id:
+      "Preserved source order identifier.",
+    source_payment_sequence:
+      "Preserved source payment sequence.",
+    order_key:
+      "Nullable foreign key to the canonical order.",
+    order_reference_status:
+      "Result of canonical order-reference resolution.",
+    payment_type:
+      "Preserved normalized source payment type.",
+    payment_installments:
+      "Preserved source installment count.",
+    payment_value:
+      "Preserved source payment value.",
+    is_order_missing_sequence_one:
+      "Indicates that the payment belongs to an order without an observed sequence one.",
+    is_zero_installment_credit_card:
+      "Indicates a credit-card payment with zero installments.",
+    is_zero_value_payment:
+      "Indicates a payment observation with zero value.",
+    has_payment_anomaly:
+      "Indicates that at least one governed payment anomaly applies."
+  }
+}
+
+WITH payments AS (
+  SELECT
+    order_id,
+    payment_sequential,
+    payment_type,
+    payment_installments,
+    payment_value,
+
+    COUNTIF(payment_sequential = 1) OVER (
+      PARTITION BY order_id
+    ) = 0 AS is_order_missing_sequence_one
+
+  FROM ${ref("stg_payments")}
+),
+
+payments_with_flags AS (
+  SELECT
+    *,
+
+    payment_type = "credit_card"
+      AND payment_installments = 0
+      AS is_zero_installment_credit_card,
+
+    payment_value = 0
+      AS is_zero_value_payment
+
+  FROM payments
+)
+
+SELECT
+  ${canonical_keys.generateCanonicalKey({
+    entityType: "payment",
+    sourceNamespace: "olist",
+    sourceIdentifiers: [
+      "payments.order_id",
+      "payments.payment_sequential"
+    ]
+  })} AS payment_key,
+
+  "olist" AS source_namespace,
+
+  payments.order_id AS source_order_id,
+  payments.payment_sequential
+    AS source_payment_sequence,
+
+  orders.order_key,
+
+  CASE
+    WHEN orders.order_key IS NOT NULL
+      THEN "matched"
+    ELSE "missing_order"
+  END AS order_reference_status,
+
+  payments.payment_type,
+  payments.payment_installments,
+  payments.payment_value,
+
+  payments.is_order_missing_sequence_one,
+  payments.is_zero_installment_credit_card,
+  payments.is_zero_value_payment,
+
+  (
+    payments.is_order_missing_sequence_one
+    OR payments.is_zero_installment_credit_card
+    OR payments.is_zero_value_payment
+  ) AS has_payment_anomaly
+
+FROM payments_with_flags AS payments
+
+LEFT JOIN ${ref("fct_orders")} AS orders
+  ON payments.order_id = orders.source_order_id

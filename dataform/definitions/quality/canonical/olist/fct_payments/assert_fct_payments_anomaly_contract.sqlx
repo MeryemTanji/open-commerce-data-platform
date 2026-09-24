@@ -1,0 +1,43 @@
+config {
+  type: "assertion",
+  schema: "canonical",
+  name: "assert_fct_payments_anomaly_contract",
+  description: "Blocks publication when canonical payment anomaly flags are inconsistent with the preserved payment evidence.",
+  dependencies: ["fct_payments"]
+}
+
+WITH payment_checks AS (
+  SELECT
+    payments.*,
+
+    (
+      COUNTIF(source_payment_sequence = 1) OVER (
+        PARTITION BY source_order_id
+      ) = 0
+    ) AS expected_missing_sequence_one
+
+  FROM ${ref("fct_payments")} AS payments
+)
+
+SELECT
+  *
+FROM payment_checks
+WHERE
+  is_order_missing_sequence_one
+    != expected_missing_sequence_one
+
+  OR is_zero_installment_credit_card
+    != (
+      payment_type = "credit_card"
+      AND payment_installments = 0
+    )
+
+  OR is_zero_value_payment
+    != (payment_value = 0)
+
+  OR has_payment_anomaly
+    != (
+      is_order_missing_sequence_one
+      OR is_zero_installment_credit_card
+      OR is_zero_value_payment
+    )

@@ -1,0 +1,30 @@
+config {
+  type: "assertion",
+  schema: "canonical",
+  name: "assert_fct_payments_identity_contract",
+  description: "Blocks publication when canonical payment identity is inconsistent with its source namespace, source identifiers, or deterministic key generation.",
+  dependencies: ["fct_payments"]
+}
+
+SELECT
+  *
+FROM ${ref("fct_payments")}
+WHERE
+  source_namespace != "olist"
+
+  OR payment_key
+    != TO_HEX(
+      SHA256(
+        TO_JSON_STRING(
+          STRUCT(
+            "v1" AS key_version,
+            "payment" AS entity_type,
+            "olist" AS source_namespace,
+            CAST(source_order_id AS STRING)
+              AS source_identifier_1,
+            CAST(source_payment_sequence AS STRING)
+              AS source_identifier_2
+          )
+        )
+      )
+    )

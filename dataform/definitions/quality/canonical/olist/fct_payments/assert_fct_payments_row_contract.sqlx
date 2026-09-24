@@ -1,0 +1,24 @@
+config {
+  type: "assertion",
+  schema: "canonical",
+  name: "assert_fct_payments_row_contract",
+  description: "Blocks publication when required canonical payment attributes are missing or outside their governed domains.",
+  dependencies: ["fct_payments"]
+}
+
+SELECT
+  *
+FROM ${ref("fct_payments")}
+WHERE
+  payment_type IS NULL
+  OR payment_installments IS NULL
+  OR payment_value IS NULL
+
+  OR source_payment_sequence < 1
+  OR payment_installments < 0
+  OR payment_value < 0
+
+  OR is_order_missing_sequence_one IS NULL
+  OR is_zero_installment_credit_card IS NULL
+  OR is_zero_value_payment IS NULL
+  OR has_payment_anomaly IS NULL
