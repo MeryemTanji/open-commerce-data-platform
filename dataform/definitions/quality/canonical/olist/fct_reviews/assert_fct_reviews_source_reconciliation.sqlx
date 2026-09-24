@@ -1,0 +1,47 @@
+config {
+  type: "assertion",
+  schema: "canonical",
+  name: "assert_fct_reviews_source_reconciliation",
+  description: "Blocks publication when canonical review entities fail to preserve the safely consolidated staged review payloads.",
+  dependencies: ["fct_reviews"]
+}
+
+WITH staged_payloads AS (
+  SELECT DISTINCT
+    review_id,
+    review_score,
+    review_comment_title,
+    review_comment_message,
+    review_creation_date,
+    review_answer_timestamp
+  FROM ${ref("stg_reviews")}
+)
+
+SELECT
+  canonical.review_key,
+  canonical.source_review_id,
+  staged.review_id AS staged_review_id
+
+FROM ${ref("fct_reviews")} AS canonical
+
+FULL OUTER JOIN staged_payloads AS staged
+  ON canonical.source_review_id = staged.review_id
+
+WHERE
+  canonical.review_key IS NULL
+  OR staged.review_id IS NULL
+
+  OR canonical.review_score
+    IS DISTINCT FROM staged.review_score
+
+  OR canonical.review_comment_title
+    IS DISTINCT FROM staged.review_comment_title
+
+  OR canonical.review_comment_message
+    IS DISTINCT FROM staged.review_comment_message
+
+  OR canonical.review_creation_date
+    IS DISTINCT FROM staged.review_creation_date
+
+  OR canonical.review_answer_timestamp
+    IS DISTINCT FROM staged.review_answer_timestamp

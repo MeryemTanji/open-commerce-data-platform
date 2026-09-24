@@ -1,0 +1,30 @@
+config {
+  type: "assertion",
+  schema: "canonical",
+  name: "assert_fct_reviews_association_reconciliation",
+  description: "Blocks publication when canonical review association counts do not reconcile to the staged order-review population.",
+  dependencies: ["fct_reviews"]
+}
+
+WITH metrics AS (
+  SELECT
+    (
+      SELECT COUNT(*)
+      FROM ${ref("stg_reviews")}
+    ) AS staged_association_count,
+
+    (
+      SELECT SUM(order_association_count)
+      FROM ${ref("fct_reviews")}
+    ) AS canonical_association_count
+)
+
+SELECT
+  staged_association_count,
+  canonical_association_count,
+  staged_association_count
+    - canonical_association_count
+    AS association_count_difference
+FROM metrics
+WHERE staged_association_count
+  != canonical_association_count

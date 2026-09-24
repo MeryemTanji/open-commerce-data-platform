@@ -1,0 +1,166 @@
+config {
+  type: "table",
+  schema: "canonical",
+  name: "fct_reviews",
+  description: "Canonical Olist review fact at one row per safely consolidated source review identifier.",
+  dependencies: ["dim_date"],
+  columns: {
+    review_key:
+      "Deterministic canonical primary key for the review entity.",
+    source_namespace:
+      "Stable namespace identifying the originating source instance.",
+    source_review_id:
+      "Preserved source review identifier.",
+    review_score:
+      "Preserved source review score.",
+    review_comment_title:
+      "Preserved nullable review title.",
+    review_comment_message:
+      "Preserved nullable review message.",
+    review_creation_date:
+      "Preserved source review-creation date.",
+    review_answer_timestamp:
+      "Preserved source review-answer timestamp.",
+    review_creation_date_key:
+      "Review-creation date key referencing the canonical date dimension.",
+    review_answer_date_key:
+      "UTC-derived review-answer date key referencing the canonical date dimension.",
+    order_association_count:
+      "Number of distinct staged order associations for the review identifier.",
+    is_reused_review_id:
+      "Indicates that the review identifier has multiple order associations.",
+    is_reused_across_purchase_dates:
+      "Indicates that associated orders have more than one distinct purchase date.",
+    is_answer_before_creation:
+      "Indicates that the answer date precedes the review-creation date.",
+    has_review_anomaly:
+      "Indicates that at least one governed warning-level review condition applies."
+  }
+}
+
+WITH review_payload_variants AS (
+  SELECT
+    review_id,
+    review_score,
+    review_comment_title,
+    review_comment_message,
+    review_creation_date,
+    review_answer_timestamp,
+    COUNT(DISTINCT order_id)
+      AS payload_order_association_count
+  FROM ${ref("stg_reviews")}
+  GROUP BY
+    review_id,
+    review_score,
+    review_comment_title,
+    review_comment_message,
+    review_creation_date,
+    review_answer_timestamp
+),
+
+review_identity_metrics AS (
+  SELECT
+    review_id,
+    COUNT(*) AS payload_variant_count,
+    SUM(payload_order_association_count)
+      AS order_association_count
+  FROM review_payload_variants
+  GROUP BY review_id
+),
+
+review_purchase_metrics AS (
+  SELECT
+    reviews.review_id,
+
+    COUNT(
+      DISTINCT DATE(
+        orders.order_purchase_timestamp,
+        "UTC"
+      )
+    ) AS distinct_purchase_date_count
+
+  FROM ${ref("stg_reviews")} AS reviews
+
+  LEFT JOIN ${ref("stg_orders")} AS orders
+    ON reviews.order_id = orders.order_id
+
+  GROUP BY reviews.review_id
+),
+
+safe_review_entities AS (
+  SELECT
+    payload.review_id,
+    payload.review_score,
+    payload.review_comment_title,
+    payload.review_comment_message,
+    payload.review_creation_date,
+    payload.review_answer_timestamp,
+    identity_metrics.order_association_count,
+    purchase_metrics.distinct_purchase_date_count
+
+  FROM review_payload_variants AS payload
+
+  JOIN review_identity_metrics AS identity_metrics
+    USING (review_id)
+
+  JOIN review_purchase_metrics AS purchase_metrics
+    USING (review_id)
+
+  WHERE identity_metrics.payload_variant_count = 1
+),
+
+reviews_with_flags AS (
+  SELECT
+    *,
+
+    order_association_count > 1
+      AS is_reused_review_id,
+
+    distinct_purchase_date_count > 1
+      AS is_reused_across_purchase_dates,
+
+    DATE(
+      review_answer_timestamp,
+      "UTC"
+    ) < review_creation_date
+      AS is_answer_before_creation
+
+  FROM safe_review_entities
+)
+
+SELECT
+  ${canonical_keys.generateCanonicalKey({
+    entityType: "review",
+    sourceNamespace: "olist",
+    sourceIdentifiers: ["reviews.review_id"]
+  })} AS review_key,
+
+  "olist" AS source_namespace,
+  reviews.review_id AS source_review_id,
+
+  reviews.review_score,
+  reviews.review_comment_title,
+  reviews.review_comment_message,
+
+  reviews.review_creation_date,
+  reviews.review_answer_timestamp,
+
+  reviews.review_creation_date
+    AS review_creation_date_key,
+
+  DATE(
+    reviews.review_answer_timestamp,
+    "UTC"
+  ) AS review_answer_date_key,
+
+  reviews.order_association_count,
+  reviews.is_reused_review_id,
+  reviews.is_reused_across_purchase_dates,
+  reviews.is_answer_before_creation,
+
+  (
+    reviews.is_reused_across_purchase_dates
+    OR reviews.is_answer_before_creation
+  ) AS has_review_anomaly
+
+FROM reviews_with_flags AS reviews

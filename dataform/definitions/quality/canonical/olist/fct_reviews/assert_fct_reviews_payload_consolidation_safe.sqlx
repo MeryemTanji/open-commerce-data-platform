@@ -1,0 +1,25 @@
+config {
+  type: "assertion",
+  schema: "canonical",
+  name: "assert_fct_reviews_payload_consolidation_safe",
+  description: "Blocks publication when one source review identifier maps to multiple distinct governed review payloads.",
+  dependencies: ["fct_reviews"]
+}
+
+WITH distinct_payloads AS (
+  SELECT DISTINCT
+    review_id,
+    review_score,
+    review_comment_title,
+    review_comment_message,
+    review_creation_date,
+    review_answer_timestamp
+  FROM ${ref("stg_reviews")}
+)
+
+SELECT
+  review_id,
+  COUNT(*) AS payload_variant_count
+FROM distinct_payloads
+GROUP BY review_id
+HAVING COUNT(*) > 1

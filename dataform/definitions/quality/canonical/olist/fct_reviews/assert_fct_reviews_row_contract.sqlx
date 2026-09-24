@@ -1,0 +1,24 @@
+config {
+  type: "assertion",
+  schema: "canonical",
+  name: "assert_fct_reviews_row_contract",
+  description: "Blocks publication when required canonical review attributes or quality indicators violate their governed domains.",
+  dependencies: ["fct_reviews"]
+}
+
+SELECT
+  *
+FROM ${ref("fct_reviews")}
+WHERE
+  review_score IS NULL
+  OR review_creation_date IS NULL
+  OR review_answer_timestamp IS NULL
+  OR order_association_count IS NULL
+
+  OR review_score NOT BETWEEN 1 AND 5
+  OR order_association_count < 1
+
+  OR is_reused_review_id IS NULL
+  OR is_reused_across_purchase_dates IS NULL
+  OR is_answer_before_creation IS NULL
+  OR has_review_anomaly IS NULL

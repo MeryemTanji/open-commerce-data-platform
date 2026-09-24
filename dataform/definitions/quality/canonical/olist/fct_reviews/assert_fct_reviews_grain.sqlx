@@ -1,0 +1,81 @@
+config {
+  type: "assertion",
+  schema: "canonical",
+  name: "assert_fct_reviews_grain",
+  description: "Blocks publication when the canonical review fact violates its declared identity grain or fails to represent every distinct staged review identifier.",
+  dependencies: ["fct_reviews"]
+}
+
+WITH metrics AS (
+  SELECT
+    (
+      SELECT COUNT(DISTINCT review_id)
+      FROM ${ref("stg_reviews")}
+    ) AS staged_review_identity_count,
+
+    (
+      SELECT COUNT(*)
+      FROM ${ref("fct_reviews")}
+    ) AS canonical_review_count,
+
+    (
+      SELECT COUNT(*)
+      FROM ${ref("fct_reviews")}
+      WHERE
+        review_key IS NULL
+        OR source_namespace IS NULL
+        OR source_review_id IS NULL
+    ) AS rows_with_null_identity,
+
+    (
+      SELECT COUNT(*)
+      FROM (
+        SELECT review_key
+        FROM ${ref("fct_reviews")}
+        GROUP BY review_key
+        HAVING COUNT(*) > 1
+      )
+    ) AS duplicate_review_keys,
+
+    (
+      SELECT COUNT(*)
+      FROM (
+        SELECT
+          source_namespace,
+          source_review_id
+        FROM ${ref("fct_reviews")}
+        GROUP BY
+          source_namespace,
+          source_review_id
+        HAVING COUNT(*) > 1
+      )
+    ) AS duplicate_source_review_ids
+)
+
+SELECT
+  failure_reason,
+  affected_row_count
+FROM metrics
+CROSS JOIN UNNEST([
+  STRUCT(
+    "canonical review count differs from distinct staged review identity count"
+      AS failure_reason,
+    ABS(
+      canonical_review_count
+        - staged_review_identity_count
+    ) AS affected_row_count
+  ),
+  STRUCT(
+    "required review identity column is null",
+    rows_with_null_identity
+  ),
+  STRUCT(
+    "canonical review key is duplicated",
+    duplicate_review_keys
+  ),
+  STRUCT(
+    "source review identity is duplicated",
+    duplicate_source_review_ids
+  )
+])
+WHERE affected_row_count > 0

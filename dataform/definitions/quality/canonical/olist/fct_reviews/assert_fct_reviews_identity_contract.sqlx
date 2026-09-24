@@ -1,0 +1,28 @@
+config {
+  type: "assertion",
+  schema: "canonical",
+  name: "assert_fct_reviews_identity_contract",
+  description: "Blocks publication when canonical review identity is inconsistent with its source namespace, source identifier, or deterministic key generation.",
+  dependencies: ["fct_reviews"]
+}
+
+SELECT
+  *
+FROM ${ref("fct_reviews")}
+WHERE
+  source_namespace != "olist"
+
+  OR review_key
+    != TO_HEX(
+      SHA256(
+        TO_JSON_STRING(
+          STRUCT(
+            "v1" AS key_version,
+            "review" AS entity_type,
+            "olist" AS source_namespace,
+            CAST(source_review_id AS STRING)
+              AS source_identifier_1
+          )
+        )
+      )
+    )

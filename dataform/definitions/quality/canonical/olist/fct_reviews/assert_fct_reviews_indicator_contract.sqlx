@@ -1,0 +1,64 @@
+config {
+  type: "assertion",
+  schema: "canonical",
+  name: "assert_fct_reviews_indicator_contract",
+  description: "Blocks publication when review reuse, chronology, or anomaly indicators contradict their underlying staged evidence.",
+  dependencies: ["fct_reviews"]
+}
+
+WITH review_metrics AS (
+  SELECT
+    reviews.review_id,
+
+    COUNT(DISTINCT reviews.order_id)
+      AS expected_order_association_count,
+
+    COUNT(
+      DISTINCT DATE(
+        orders.order_purchase_timestamp,
+        "UTC"
+      )
+    ) AS distinct_purchase_date_count
+
+  FROM ${ref("stg_reviews")} AS reviews
+
+  LEFT JOIN ${ref("stg_orders")} AS orders
+    ON reviews.order_id = orders.order_id
+
+  GROUP BY reviews.review_id
+)
+
+SELECT
+  reviews.*
+FROM ${ref("fct_reviews")} AS reviews
+
+JOIN review_metrics AS metrics
+  ON reviews.source_review_id = metrics.review_id
+
+WHERE
+  reviews.order_association_count
+    != metrics.expected_order_association_count
+
+  OR reviews.is_reused_review_id
+    != (
+      metrics.expected_order_association_count > 1
+    )
+
+  OR reviews.is_reused_across_purchase_dates
+    != (
+      metrics.distinct_purchase_date_count > 1
+    )
+
+  OR reviews.is_answer_before_creation
+    != (
+      DATE(
+        reviews.review_answer_timestamp,
+        "UTC"
+      ) < reviews.review_creation_date
+    )
+
+  OR reviews.has_review_anomaly
+    != (
+      reviews.is_reused_across_purchase_dates
+      OR reviews.is_answer_before_creation
+    )

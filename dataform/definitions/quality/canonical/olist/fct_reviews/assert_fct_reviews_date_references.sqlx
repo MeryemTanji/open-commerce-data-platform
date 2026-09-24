@@ -1,0 +1,35 @@
+config {
+  type: "assertion",
+  schema: "canonical",
+  name: "assert_fct_reviews_date_references",
+  description: "Blocks publication when review temporal values and their canonical date references are missing or inconsistent.",
+  dependencies: ["fct_reviews"]
+}
+
+SELECT
+  reviews.*
+FROM ${ref("fct_reviews")} AS reviews
+
+LEFT JOIN ${ref("dim_date")} AS creation_dates
+  ON reviews.review_creation_date_key
+    = creation_dates.date_key
+
+LEFT JOIN ${ref("dim_date")} AS answer_dates
+  ON reviews.review_answer_date_key
+    = answer_dates.date_key
+
+WHERE
+  reviews.review_creation_date_key IS NULL
+  OR reviews.review_answer_date_key IS NULL
+
+  OR creation_dates.date_key IS NULL
+  OR answer_dates.date_key IS NULL
+
+  OR reviews.review_creation_date_key
+    != reviews.review_creation_date
+
+  OR reviews.review_answer_date_key
+    != DATE(
+      reviews.review_answer_timestamp,
+      "UTC"
+    )
