@@ -1,0 +1,40 @@
+config {
+  type: "table",
+  schema: "canonical",
+  name: "bridge_order_reviews",
+  description: "Canonical Olist order-review bridge preserving each publishable source association between canonical orders and reviews.",
+  columns: {
+    order_key:
+      "Foreign key to the canonical order.",
+    review_key:
+      "Foreign key to the canonical review.",
+    source_namespace:
+      "Stable namespace identifying the originating source instance.",
+    source_order_id:
+      "Preserved source order identifier.",
+    source_review_id:
+      "Preserved source review identifier."
+  }
+}
+
+WITH source_associations AS (
+  SELECT DISTINCT
+    order_id,
+    review_id
+  FROM ${ref("stg_reviews")}
+)
+
+SELECT
+  orders.order_key,
+  reviews.review_key,
+  "olist" AS source_namespace,
+  associations.order_id AS source_order_id,
+  associations.review_id AS source_review_id
+
+FROM source_associations AS associations
+
+JOIN ${ref("fct_orders")} AS orders
+  ON associations.order_id = orders.source_order_id
+
+JOIN ${ref("fct_reviews")} AS reviews
+  ON associations.review_id = reviews.source_review_id

@@ -1,0 +1,28 @@
+config {
+  type: "assertion",
+  schema: "canonical",
+  name: "assert_bridge_order_reviews_parent_references",
+  description: "Blocks publication when an order-review bridge row does not resolve to its canonical parents or disagrees with their preserved source lineage."
+}
+
+SELECT
+  bridge.*
+FROM ${ref("bridge_order_reviews")} AS bridge
+
+LEFT JOIN ${ref("fct_orders")} AS orders
+  ON bridge.order_key = orders.order_key
+
+LEFT JOIN ${ref("fct_reviews")} AS reviews
+  ON bridge.review_key = reviews.review_key
+
+WHERE
+  orders.order_key IS NULL
+  OR reviews.review_key IS NULL
+  OR bridge.source_namespace
+    IS DISTINCT FROM orders.source_namespace
+  OR bridge.source_namespace
+    IS DISTINCT FROM reviews.source_namespace
+  OR bridge.source_order_id
+    IS DISTINCT FROM orders.source_order_id
+  OR bridge.source_review_id
+    IS DISTINCT FROM reviews.source_review_id

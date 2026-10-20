@@ -1,0 +1,35 @@
+config {
+  type: "assertion",
+  schema: "canonical",
+  name: "assert_bridge_order_reviews_source_reconciliation",
+  description: "Blocks publication when the canonical order-review bridge omits or invents a distinct staged order-review association."
+}
+
+WITH staged_associations AS (
+  SELECT DISTINCT
+    order_id AS source_order_id,
+    review_id AS source_review_id
+  FROM ${ref("stg_reviews")}
+),
+
+bridge_associations AS (
+  SELECT
+    source_order_id,
+    source_review_id
+  FROM ${ref("bridge_order_reviews")}
+)
+
+SELECT
+  staged.source_order_id AS staged_order_id,
+  staged.source_review_id AS staged_review_id,
+  bridge.source_order_id AS bridge_order_id,
+  bridge.source_review_id AS bridge_review_id
+FROM staged_associations AS staged
+
+FULL OUTER JOIN bridge_associations AS bridge
+  ON staged.source_order_id = bridge.source_order_id
+  AND staged.source_review_id = bridge.source_review_id
+
+WHERE
+  staged.source_order_id IS NULL
+  OR bridge.source_order_id IS NULL

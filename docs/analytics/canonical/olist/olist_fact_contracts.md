@@ -1642,7 +1642,7 @@ An order may be associated with more than one canonical review.
 These reviews may contain different:
 
 - scores;
-- creation timestamps;
+- creation dates;
 - answer timestamps;
 - titles;
 - messages.

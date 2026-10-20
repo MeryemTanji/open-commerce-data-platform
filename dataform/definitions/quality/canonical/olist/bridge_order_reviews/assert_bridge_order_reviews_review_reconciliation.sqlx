@@ -1,0 +1,34 @@
+config {
+  type: "assertion",
+  schema: "canonical",
+  name: "assert_bridge_order_reviews_review_reconciliation",
+  description: "Blocks publication when bridge association counts disagree with the governed order-association count on a canonical review."
+}
+
+WITH bridge_counts AS (
+  SELECT
+    review_key,
+    COUNT(*) AS bridge_order_association_count
+  FROM ${ref("bridge_order_reviews")}
+  GROUP BY review_key
+)
+
+SELECT
+  reviews.review_key,
+  reviews.source_review_id,
+  reviews.order_association_count,
+  COALESCE(
+    bridge_counts.bridge_order_association_count,
+    0
+  ) AS bridge_order_association_count
+FROM ${ref("fct_reviews")} AS reviews
+
+LEFT JOIN bridge_counts
+  USING (review_key)
+
+WHERE
+  reviews.order_association_count
+    != COALESCE(
+      bridge_counts.bridge_order_association_count,
+      0
+    )

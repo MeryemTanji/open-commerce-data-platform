@@ -1,0 +1,39 @@
+config {
+  type: "assertion",
+  schema: "canonical",
+  name: "assert_bridge_order_reviews_grain",
+  description: "Blocks publication when the canonical order-review bridge contains null required values or duplicate canonical or source associations."
+}
+
+WITH evaluated_associations AS (
+  SELECT
+    *,
+    COUNT(*) OVER (
+      PARTITION BY
+        order_key,
+        review_key
+    ) AS canonical_association_count,
+    COUNT(*) OVER (
+      PARTITION BY
+        source_namespace,
+        source_order_id,
+        source_review_id
+    ) AS source_association_count
+  FROM ${ref("bridge_order_reviews")}
+)
+
+SELECT
+  * EXCEPT (
+    canonical_association_count,
+    source_association_count
+  )
+FROM evaluated_associations
+WHERE
+  order_key IS NULL
+  OR review_key IS NULL
+  OR source_namespace IS NULL
+  OR source_order_id IS NULL
+  OR source_review_id IS NULL
+  OR source_namespace != "olist"
+  OR canonical_association_count > 1
+  OR source_association_count > 1

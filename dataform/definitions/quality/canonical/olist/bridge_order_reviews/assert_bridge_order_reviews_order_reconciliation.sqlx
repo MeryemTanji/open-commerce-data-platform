@@ -1,0 +1,36 @@
+config {
+  type: "assertion",
+  schema: "canonical",
+  name: "assert_bridge_order_reviews_order_reconciliation",
+  description: "Blocks publication when bridge association counts disagree with the governed order-level review summary."
+}
+
+WITH bridge_counts AS (
+  SELECT
+    source_order_id,
+    COUNT(*) AS bridge_review_association_count
+  FROM ${ref("bridge_order_reviews")}
+  GROUP BY source_order_id
+),
+
+comparison AS (
+  SELECT
+    summary.source_order_id AS summary_order_id,
+    bridge.source_order_id AS bridge_order_id,
+    summary.review_association_count
+      AS summary_review_association_count,
+    bridge.bridge_review_association_count
+  FROM ${ref("int_order_review_summary")} AS summary
+
+  FULL OUTER JOIN bridge_counts AS bridge
+    USING (source_order_id)
+)
+
+SELECT
+  *
+FROM comparison
+WHERE
+  summary_order_id IS NULL
+  OR bridge_order_id IS NULL
+  OR summary_review_association_count
+    IS DISTINCT FROM bridge_review_association_count
