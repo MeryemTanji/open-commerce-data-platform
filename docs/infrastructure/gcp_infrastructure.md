@@ -24,6 +24,7 @@ In particular:
 - ADR-011 defines Mercury's security and least-privilege requirements;
 - ADR-012 defines the separation between Terraform-managed infrastructure and Dataform-managed analytical transformations;
 - ADR-013 defines anomaly disposition and monitoring requirements for the quality controls deployed within the analytical environment.
+- ADR-014 defines production scheduling, orchestration, runtime, and workload-identity boundaries.
 
 This document should be updated when Mercury's deployed infrastructure materially changes.
 
@@ -234,7 +235,9 @@ The Dataform identity has dataset-scoped `roles/bigquery.dataEditor` access to `
 
 Relation creation, reading, and cleanup inside the dataset have been validated under the Dataform identity.
 
-The dataset currently contains no canonical business relations. Their grains, relationships, anomaly treatments, and publication controls will be defined during Phase 3.7 before implementation.
+The dataset contains Mercury's implemented Olist canonical model: five dimensions, four facts, one bridge, and four governed intermediate relations. The model is protected by 62 canonical assertions covering grains, keys, parent references, anomaly dispositions, source reconciliation, measure reconciliation, and join-amplification safeguards.
+
+Detailed contracts and validation evidence are maintained under [docs/analytics/canonical/olist/](../analytics/canonical/olist/).
 
 ### 5.5 Current BigQuery Warehouse Structure
 
@@ -244,8 +247,8 @@ The implemented development warehouse currently contains four datasets:
 BigQuery
 ├── metadata   operational control plane
 ├── raw        source-faithful warehouse layer
-├── staging    standardisation and quality boundary
-└── canonical  provisioned business-model boundary
+├── staging    standardisation and source-quality boundary
+└── canonical  governed reusable business model
 ```
 
 #### metadata relations
@@ -522,11 +525,11 @@ short-lived developer impersonation
 
 Validation confirmed that the identity cannot modify Raw, create arbitrary datasets, access Raw GCS, or access the BigQuery metadata control plane.
 
-The transformation infrastructure now supports the complete Olist staging, staging-quality, and relationship-quality graph. All eight staging models, their blocking assertions, and the 13 non-blocking quality views have been executed successfully under the dedicated Dataform transformation identity.
+The transformation infrastructure supports the complete Olist staging and canonical graph. The Dataform project contains 35 datasets and 83 assertions, including eight staging tables, 13 non-blocking quality views, 14 canonical relations, 21 staging assertions, and 62 canonical assertions.
 
-The Terraform-managed `canonical` dataset and its dataset-scoped Dataform access boundary are also implemented and validated. Dataform can manage relations inside the dataset but cannot create or administer dataset infrastructure. No canonical business relations have yet been published.
+The complete canonical publication selection has compiled, dry-run, and executed successfully under the dedicated Dataform transformation identity. Dataform can manage relations inside the `staging` and `canonical` datasets but cannot create or administer dataset infrastructure.
 
-Broader Terraform adoption will continue incrementally as additional infrastructure enters active implementation scope.
+Broader Terraform adoption now continues through Phase 4 as Cloud Run, Cloud Workflows, Cloud Scheduler, production identities, runtime IAM, and monitoring enter active implementation scope.
 
 Detailed validation evidence is maintained in [Dataform Transformation Identity Validation](../security/dataform-transformation-identity-validation.md).
 
