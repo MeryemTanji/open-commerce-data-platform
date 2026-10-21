@@ -17,6 +17,7 @@ date expectations; each such test is clearly marked.
 """
 
 from __future__ import annotations
+from dataclasses import replace
 
 import csv
 import hashlib
@@ -827,17 +828,29 @@ class TestOneSuccessfulDateEventSequence:
                 (ReplayStatus.SUCCESS, ReplayStage.WAREHOUSE),
             ]
 
-    def test_all_events_share_one_run_id(self, tmp_path: Path) -> None:
+    def test_result_exposes_the_persisted_run_id(self, tmp_path: Path) -> None:
         paths = _write_source_files(tmp_path)
         day = date(2017, 5, 1)
         runner, provider, storage_manager, bigquery_loader, replay_state_store, provenance_store = _make_runner(
             tmp_path, daily_batches={day: _daily_batch(paths, day)}
         )
 
-        runner.run_day(day)
+        result = runner.run_day(day)
 
         run_ids = {event.run_id for event in replay_state_store.events}
-        assert len(run_ids) == 1
+        assert run_ids == {result.run_id}
+
+    def test_day_result_rejects_blank_run_id(self, tmp_path: Path) -> None:
+        paths = _write_source_files(tmp_path)
+        day = date(2017, 5, 1)
+        runner, provider, storage_manager, bigquery_loader, replay_state_store, provenance_store = _make_runner(
+            tmp_path, daily_batches={day: _daily_batch(paths, day)}
+        )
+
+        result = runner.run_day(day)
+
+        with pytest.raises(ValueError, match="run_id cannot be blank"):
+            replace(result, run_id="   ")
 
     def test_every_event_id_is_distinct(self, tmp_path: Path) -> None:
         paths = _write_source_files(tmp_path)
@@ -1102,6 +1115,9 @@ class TestIngestionFailureContinuesSameDateWork:
         partial = exc_info.value.partial_day_result
         assert partial is not None
         assert len(partial.ingestion_result.results) == 4
+
+        persisted_run_ids = {event.run_id for event in replay_state_store.events}
+        assert persisted_run_ids == {partial.run_id}
 
     def test_payments_state_is_running_then_failed_ingestion_only(self, tmp_path: Path) -> None:
         paths = _write_source_files(tmp_path)
@@ -1476,17 +1492,20 @@ class TestRunRange:
 
 
 class TestRunIdAcrossRange:
-    def test_run_range_uses_one_run_id_across_all_attempted_dates(self, tmp_path: Path) -> None:
+    def test_run_range_exposes_one_shared_run_id_across_dates(self, tmp_path: Path) -> None:
         paths = _write_source_files(tmp_path)
         days = [date(2017, 5, 1), date(2017, 5, 2), date(2017, 5, 3)]
         runner, provider, storage_manager, bigquery_loader, replay_state_store, provenance_store = _make_runner(
             tmp_path, daily_batches={d: _daily_batch(paths, d) for d in days}
         )
 
-        runner.run_range(date(2017, 5, 1), date(2017, 5, 3))
+        result = runner.run_range(date(2017, 5, 1), date(2017, 5, 3))
 
-        run_ids = {event.run_id for event in replay_state_store.events}
-        assert len(run_ids) == 1
+        persisted_run_ids = {event.run_id for event in replay_state_store.events}
+        result_run_ids = {day_result.run_id for day_result in result.day_results}
+
+        assert len(persisted_run_ids) == 1
+        assert result_run_ids == persisted_run_ids
 
     def test_separate_run_range_calls_use_different_run_ids(self, tmp_path: Path) -> None:
         paths = _write_source_files(tmp_path)

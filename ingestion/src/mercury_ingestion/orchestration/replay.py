@@ -151,12 +151,17 @@ class HistoricalReplayDayResult:
     information is never silently discarded.
     """
 
+    run_id: str
     delivery_date: date
     source_batch: SourceDeliveryBatch
     ingestion_result: RunnerResult
     warehouse_results: tuple[BigQueryLoadResult, ...]
 
     def __post_init__(self) -> None:
+        if not isinstance(self.run_id, str):
+            raise TypeError("run_id must be a string")
+        if not self.run_id.strip():
+            raise ValueError("run_id cannot be blank")
         _require_date(self.delivery_date, "delivery_date")
         if not isinstance(self.source_batch, SourceDeliveryBatch):
             raise TypeError("source_batch must be a SourceDeliveryBatch")
@@ -393,6 +398,7 @@ class HistoricalReplayRunner:
         )
 
         day_result = HistoricalReplayDayResult(
+            run_id=run_id,
             delivery_date=delivery_date,
             source_batch=source_batch,
             ingestion_result=ingestion_result,
