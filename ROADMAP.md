@@ -22,11 +22,11 @@ Phase 1 — Ingestion                  [x] Complete
         ↓
 Phase 2 — Cloud Raw Platform         [x] Complete
         ↓
-Phase 3 — Analytics Engineering      [wip] In Progress
+Phase 3 — Analytics Engineering      [x] Complete
         ↓
-Phase 4 — Production Platform        [] Planned
+Phase 4 — Production Platform        [ ] Planned
         ↓
-Phase 5 — Data Products              [] Planned
+Phase 5 — Data Products              [ ] Planned
 ```
 
 ### Phase 0 - Foundation
@@ -167,7 +167,7 @@ The ingestion and Raw-platform foundation is complete for the current Version 1 
 
 ### Phase 3 - Analytics Engineering
 
-**Status**: [wip] In Progress
+**Status**: [x] Complete
 
 Phase 3 transforms source-faithful Raw data into standardised, tested, analytically useful data while preserving clear infrastructure and security boundaries.
 
@@ -288,7 +288,7 @@ Before implementing the canonical model:
 
 #### 3.7 Canonical Business Model
 
-**Status**: [wip] In Progress
+**Status**: [x] Complete
 
 Implement Mercury's reusable business-oriented model above staging.
 
@@ -297,52 +297,60 @@ Implement Mercury's reusable business-oriented model above staging.
 - [x] Provision the Terraform-managed `canonical` BigQuery dataset
 - [x] Grant the Dataform transformation identity dataset-scoped relation management
 - [x] Validate canonical relation creation, reading, and cleanup under the Dataform identity
-- [ ] Document the canonical model architecture
-- [ ] Define source-specific canonical implementation contracts
-
-Expected model direction includes:
+- [x] Document the canonical model architecture
+- [x] Define source-specific canonical implementation contracts
 
 ##### Dimensions
 
-- [ ] Customer
-- [ ] Product
-- [ ] Seller
-- [ ] Date
-- [ ] Location
+- [x] `dim_customer`
+- [x] `dim_product`
+- [x] `dim_seller`
+- [x] `dim_date`
+- [x] `dim_location`
 
 ##### Facts
 
-- [ ] Orders
-- [ ] Order Items
-- [ ] Payments
-- [ ] Reviews
+- [x] `fct_orders`
+- [x] `fct_order_items`
+- [x] `fct_payments`
+- [x] `fct_reviews`
 
 ##### Bridges
 
-- [ ] Order–Review
+- [x] `bridge_order_reviews`
+
+##### Governed Intermediate Relations
+
+- [x] `int_geolocation_resolution`
+- [x] `int_order_item_summary`
+- [x] `int_order_payment_summary`
+- [x] `int_order_review_summary`
 
 ##### Quality and Publication Safeguards
 
-- [ ] Implement canonical grain and key assertions
-- [ ] Implement referential-integrity controls
-- [ ] Apply approved anomaly dispositions
-- [ ] Prevent join amplification across one-to-many relationships
-- [ ] Reconcile canonical measures with validated staging totals
-- [ ] Validate the complete canonical Dataform graph
+- [x] Implement canonical grain and key assertions
+- [x] Implement referential-integrity controls
+- [x] Apply approved anomaly dispositions
+- [x] Prevent join amplification across one-to-many relationships
+- [x] Reconcile canonical measures with validated staging totals
+- [x] Validate the complete canonical Dataform graph
+- [x] Record canonical publication and validation evidence
+- [x] Establish tag-based canonical publication selection
 
-Final model grain, relationships, and naming must follow the validated relationship profile rather than being assumed from the Raw source structure.
+The implemented model follows the validated relationship profile rather than assuming grains and relationships from the Raw source structure.
 
 #### Phase 3 Exit Criteria
 
-Phase 3 is complete when:
+Phase 3 is complete because:
 
-- [ ] Dataform executes through a dedicated least-privilege transformation identity;
-- [ ] all eight Raw sources have implemented staging models;
-- [ ] blocking staging assertions are operational;
-- [ ] non-blocking quality observations are operational;
-- [ ] staged relationships have been profiled and validated;
-- [ ] the canonical business model is implemented and tested;
-- [ ] analytical transformation infrastructure is reproducible through the intended Terraform/Dataform ownership model.
+- [x] Dataform executes through a dedicated least-privilege transformation identity;
+- [x] all eight Raw sources have implemented staging models;
+- [x] blocking staging assertions are operational;
+- [x] non-blocking quality observations are operational;
+- [x] staged relationships have been profiled and validated;
+- [x] the canonical business model is implemented and tested;
+- [x] canonical publication and validation evidence is recorded;
+- [x] analytical transformation infrastructure is reproducible through the intended Terraform/Dataform ownership model.
 
 ### Phase 4 — Production Platform
 

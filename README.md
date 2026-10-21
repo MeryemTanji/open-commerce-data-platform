@@ -97,18 +97,25 @@ Mercury follows a layered architecture with clear responsibilities between inges
 
 ### Current BigQuery Implementation
 
-Mercury currently operates three governed BigQuery datasets:
+Mercury currently operates four governed BigQuery datasets:
 
 ```text
-metadata   3 operational control-plane tables
-raw        8 immutable Olist source tables
-staging    8 standardised tables + 21 blocking assertions + 13 non-blocking quality views
-canonical   provisioned transformation boundary; business relations not yet implemented
+metadata    3 operational control-plane tables
+raw         8 immutable Olist source tables
+staging     8 standardised tables + 21 blocking assertions + 13 non-blocking quality views
+canonical   14 governed relations + 62 blocking assertions
 ```
 
-The Terraform-managed canonical dataset and its least-privilege Dataform access boundary are provisioned and validated. Canonical business relations are the current warehouse implementation focus. See [Mercury GCP Infrastructure](docs/infrastructure/gcp_infrastructure.md) for the implemented warehouse structure and ownership boundaries.
+The Terraform-managed canonical dataset contains Mercury's initial Olist canonical model:
 
-Detailed architectural decisions are documented in [architecture/decisions/](architecture/decisions/).
+- five dimensions;
+- four facts;
+- one bridge;
+- four governed intermediate relations.
+
+The complete canonical graph compiles and executes through the dedicated least-privilege Dataform identity. Its assertions validate relation grains, deterministic keys, parent references, source reconciliation, anomaly dispositions, monetary reconciliation, and join-amplification safeguards.
+
+See [Mercury GCP Infrastructure](docs/infrastructure/gcp_infrastructure.md). Detailed architectural decisions are documented in [architecture/decisions/](architecture/decisions/).
 
 ## Platform Capabilities
 
@@ -181,6 +188,12 @@ The Olist staging layer is implemented and validated across all eight Raw source
 
 See [ADR-012](architecture/decisions/ADR-012-Staging%20Layer%20Standardization%20and%20Semantic%20Contracts.md) and the Olist staging contract under [docs/](docs/analytics/staging/) for detailed staging rules.
 
+The Olist canonical layer is also implemented and validated. It transforms the staging relations into reusable customer, product, seller, location, date, order, order-item, payment, and review entities while preserving source traceability and approved anomaly dispositions.
+
+The complete Dataform project contains 118 actions, including 35 datasets and 83 assertions. The canonical publication selection contains 14 relations and 62 assertions, all of which have successfully compiled, dry-run, and executed.
+
+See the [canonical model design](architecture/designs/canonical_model_design.md), [Olist canonical contracts](docs/analytics/canonical/olist/), and [canonical validation evidence](docs/analytics/canonical/olist/olist_canonical_validation.md) for the detailed model and validation results.
+
 ### Security & Infrastructure
 
 Security boundaries are designed around least privilege and separation of responsibilities.
@@ -231,8 +244,9 @@ See [ADR-011](architecture/decisions/ADR-011-Data%20Security,%20Privacy,%20and%2
 │   ├── definitions/
 │   │   ├── sources/        # BigQuery Raw declarations
 │   │   ├── staging/        # Standardised staging models
-│   │   └── quality/        # Data-quality logic
-│   └── includes/
+│   │   ├── canonical/      # Governed canonical relations
+│   │   └── quality/        # Staging and canonical quality controls
+│   └── includes/           # Shared Dataform helpers
 │
 ├── terraform/
 │   └── environments/       # Infrastructure definitions
@@ -273,7 +287,7 @@ Phase 1 — Ingestion                  [x]
         ↓
 Phase 2 — Cloud Raw Platform         [x]
         ↓
-Phase 3 — Analytics Engineering      [wip]
+Phase 3 — Analytics Engineering      [x]
         ↓
 Phase 4 — Production Platform
         ↓
@@ -282,26 +296,24 @@ Phase 5 — Data Products
 
 ## Current Focus
 
-Mercury is currently in **Phase 3 — Analytics Engineering**.
+Mercury has completed **Phase 3 — Analytics Engineering**.
 
-The reusable staging standard and Olist staging contracts have been implemented across all eight Raw sources. The complete Dataform graph compiles and executes successfully under the dedicated least-privilege transformation identity, and all staging assertions pass.
+The eight Olist Raw sources now progress through governed staging and canonical layers. The implemented canonical graph contains five dimensions, four facts, one bridge, and four intermediate relations with explicit grains, deterministic keys, source traceability, anomaly dispositions, reconciliation controls, and join-amplification safeguards.
 
-The anomaly-disposition and monitoring contract has been defined, with Olist controls, validated baselines, severities, ownership, response expectations, and downstream dispositions documented.
+The complete Dataform project compiles successfully. All canonical relations and blocking assertions have been dry-run and executed, and all 13 non-blocking quality observations remain operational.
 
-Relationship exploration across the staged Olist entities is complete. The validated findings document referential coverage, cardinalities, identity behavior, monetary reconciliation, geographic-resolution requirements, and the safeguards needed to prevent join amplification.
-
-Current work has entered canonical model design. The Terraform-managed canonical dataset and its least-privilege Dataform access boundary are provisioned and validated. This phase will translate the staging contracts, anomaly dispositions, and relationship findings into reusable business entities with explicit grains, governed relationships, and publication controls.
-
-Operational implementation of quality history, baseline evaluation, and automated alerting is planned as part of **Phase 4 — Production Platform**.
+Mercury is now preparing for **Phase 4 — Production Platform**, which will operationalise the platform through scheduled execution, persistent quality history, monitoring, alerting, CI/CD, and production-oriented runbooks.
 
 The next major steps are:
 
 ```text
-Canonical Model Design
+Production Runtime and Scheduling
         ↓
-Canonical Business Model
+Quality Monitoring and Alerting
         ↓
-Production Platform
+CI/CD and Operational Readiness
+        ↓
+Reusable Data Products
 ```
 
 Detailed implementation status and upcoming work are maintained in [ROADMAP.md](ROADMAP.md).
