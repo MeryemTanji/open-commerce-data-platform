@@ -2,6 +2,7 @@ config {
   type: "assertion",
   schema: "canonical",
   name: "assert_canonical_key_generation",
+  tags: ["canonical", "assertion", "platform"],
   description: "Validates deterministic canonical-key generation, null handling, namespace separation, entity separation, and compound-key component order."
 }
 

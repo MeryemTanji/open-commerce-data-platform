@@ -2,6 +2,7 @@ config {
   type: "table",
   schema: "canonical",
   name: "bridge_order_reviews",
+  tags: ["canonical", "olist", "bridge"],
   description: "Canonical Olist order-review bridge preserving each publishable source association between canonical orders and reviews.",
   columns: {
     order_key:

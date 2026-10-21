@@ -2,6 +2,13 @@ config {
   type: "view",
   schema: "staging",
   name: "dq_geolocations_duplicate_observations",
+  tags: [
+    "staging",
+    "olist",
+    "quality",
+    "non_blocking",
+    "entity_observation"
+  ],
   description: "Non-blocking summary of duplicate normalized Olist geolocation observations preserved by the staging contract."
 }
 

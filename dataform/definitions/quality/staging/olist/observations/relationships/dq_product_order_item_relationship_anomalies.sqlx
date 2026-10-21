@@ -2,6 +2,13 @@ config {
   type: "view",
   schema: "staging",
   name: "dq_product_order_item_relationship_anomalies",
+  tags: [
+    "staging",
+    "olist",
+    "quality",
+    "non_blocking",
+    "relationship_observation"
+  ],
   description: "Non-blocking observations of product and order-item relationship coverage and repeated-product commercial consistency."
 }
 

@@ -2,6 +2,13 @@ config {
   type: "view",
   schema: "staging",
   name: "dq_reviews_chronology_anomalies",
+  tags: [
+    "staging",
+    "olist",
+    "quality",
+    "non_blocking",
+    "entity_observation"
+  ],
   description: "Non-blocking Olist review chronology anomalies surfaced for current and future source deliveries."
 }
 

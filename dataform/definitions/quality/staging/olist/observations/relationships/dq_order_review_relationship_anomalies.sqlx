@@ -2,6 +2,13 @@ config {
   type: "view",
   schema: "staging",
   name: "dq_order_review_relationship_anomalies",
+  tags: [
+    "staging",
+    "olist",
+    "quality",
+    "non_blocking",
+    "relationship_observation"
+  ],
   description: "Non-blocking observations of order and review relationship coverage, cardinality, identity consistency, and temporal behavior."
 }
 

@@ -2,6 +2,7 @@ config {
   type: "table",
   schema: "canonical",
   name: "fct_order_items",
+  tags: ["canonical", "olist", "fact"],
   description: "Canonical Olist order-item fact at one row per source order and order-item identifier.",
   columns: {
     order_item_key:

@@ -2,6 +2,13 @@ config {
   type: "view",
   schema: "staging",
   name: "dq_customer_order_relationship_anomalies",
+  tags: [
+    "staging",
+    "olist",
+    "quality",
+    "non_blocking",
+    "relationship_observation"
+  ],
   description: "Non-blocking relationship-quality observations between Olist staged customers and orders."
 }
 

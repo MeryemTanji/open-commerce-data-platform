@@ -2,6 +2,13 @@ config {
   type: "view",
   schema: "staging",
   name: "dq_geographic_relationship_anomalies",
+  tags: [
+    "staging",
+    "olist",
+    "quality",
+    "non_blocking",
+    "relationship_observation"
+  ],
   description: "Non-blocking observations of customer, seller, and geolocation relationship coverage, state consistency, and modal-state resolution ambiguity."
 }
 

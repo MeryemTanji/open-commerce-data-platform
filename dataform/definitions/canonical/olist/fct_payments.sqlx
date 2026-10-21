@@ -2,6 +2,7 @@ config {
   type: "table",
   schema: "canonical",
   name: "fct_payments",
+  tags: ["canonical", "olist", "fact"],
   description: "Canonical Olist payment fact at one row per source order and payment sequence.",
   columns: {
     payment_key:

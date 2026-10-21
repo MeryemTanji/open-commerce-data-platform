@@ -2,6 +2,13 @@ config {
   type: "view",
   schema: "staging",
   name: "dq_products_anomalies",
+  tags: [
+    "staging",
+    "olist",
+    "quality",
+    "non_blocking",
+    "entity_observation"
+  ],
   description: "Non-blocking Olist product metadata and measurement anomalies preserved for investigation under the staging contract."
 }
 

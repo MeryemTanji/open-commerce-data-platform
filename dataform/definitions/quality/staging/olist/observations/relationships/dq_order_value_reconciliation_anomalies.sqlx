@@ -2,6 +2,13 @@ config {
   type: "view",
   schema: "staging",
   name: "dq_order_value_reconciliation_anomalies",
+  tags: [
+    "staging",
+    "olist",
+    "quality",
+    "non_blocking",
+    "relationship_observation"
+  ],
   description: "Non-blocking reconciliation observations comparing Olist order-item totals with payment totals at order grain."
 }
 
