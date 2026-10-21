@@ -22,20 +22,10 @@ import csv
 from datetime import date, datetime
 from pathlib import Path
 
-from mercury_ingestion.common.gcs_storage import GCSStorageManager
-from mercury_ingestion.orchestration.bigquery_provenance import (
-    BigQueryProvenanceStore,
-)
-from mercury_ingestion.orchestration.bigquery_replay_state import (
-    BigQueryReplayStateStore,
-)
 from mercury_ingestion.orchestration.replay import HistoricalReplayRunner
-from mercury_ingestion.simulation.olist import OlistSourceSimulator
-from mercury_ingestion.sources.simulated_olist import (
-    OlistSimulatedSourceProvider,
+from mercury_ingestion.runtime.olist_runner_factory import (
+    build_olist_replay_runner,
 )
-from mercury_ingestion.warehouse.bigquery_loader import BigQueryRawLoader
-
 
 PROJECT_ID = "mercury-data-platform-dev"
 RAW_DATASET_ID = "raw"
@@ -114,47 +104,16 @@ def determine_replay_range() -> tuple[date, date]:
 
 
 def build_runner() -> HistoricalReplayRunner:
-    """Construct the production-backed historical replay runner."""
+    """Construct the cloud-backed historical replay runner."""
 
-    simulator = OlistSourceSimulator(
+    return build_olist_replay_runner(
         source_directory=SOURCE_DIRECTORY,
-        output_directory=SIMULATION_DIRECTORY,
-    )
-
-    source_provider = OlistSimulatedSourceProvider(simulator)
-
-    storage_manager = GCSStorageManager(
-        bucket_name=BUCKET_NAME,
+        simulation_directory=SIMULATION_DIRECTORY,
         project_id=PROJECT_ID,
-    )
-
-    bigquery_loader = BigQueryRawLoader(
-        project_id=PROJECT_ID,
-        dataset_id=RAW_DATASET_ID,
+        raw_bucket_name=BUCKET_NAME,
+        raw_dataset_id=RAW_DATASET_ID,
+        metadata_dataset_id=METADATA_DATASET_ID,
         location=LOCATION,
-    )
-
-    replay_state_store = BigQueryReplayStateStore(
-        project_id=PROJECT_ID,
-        dataset_id=METADATA_DATASET_ID,
-        location=LOCATION,
-    )
-
-    provenance_store = BigQueryProvenanceStore(
-        project_id=PROJECT_ID,
-        dataset_id=METADATA_DATASET_ID,
-        location=LOCATION,
-    )
-
-    replay_state_store.ensure_resources()
-    provenance_store.ensure_resources()
-
-    return HistoricalReplayRunner(
-        source_provider=source_provider,
-        storage_manager=storage_manager,
-        bigquery_loader=bigquery_loader,
-        replay_state_store=replay_state_store,
-        provenance_store=provenance_store,
     )
 
 
