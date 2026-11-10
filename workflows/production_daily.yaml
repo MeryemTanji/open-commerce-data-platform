@@ -15,6 +15,7 @@ main:
           - metadata_dataset: ${map.get(request, "metadata_dataset")}
           - ingestion_job_name: ${map.get(request, "ingestion_job_name")}
           - dataform_repository: ${map.get(request, "dataform_repository")}
+          - dataform_pipeline_path: ${default(map.get(request, "dataform_pipeline_path"), "dataform")}
           - dataform_git_commitish: ${default(map.get(request, "dataform_git_commitish"), "main")}
           - dataform_service_account: ${map.get(request, "dataform_service_account")}
           - cloud_run_timeout_seconds: ${default(map.get(request, "cloud_run_timeout_seconds"), 3600)}
@@ -203,6 +204,10 @@ main:
             type: OAuth2
           body:
             gitCommitish: ${dataform_git_commitish}
+            codeCompilationConfig:
+              pipelineConfig:
+                pipelineType: DATAFORM
+                path: ${dataform_pipeline_path}
         retry: ${http.default_retry}
         result: dataform_compilation
 

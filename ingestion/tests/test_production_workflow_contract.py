@@ -138,3 +138,12 @@ def test_scheduled_mode_uses_durable_simulation_clock() -> None:
     assert "ORDER BY delivery_date" in source
     assert "LIMIT 1" in source
     assert "complete_no_work_remaining" in source
+
+def test_dataform_compiles_repository_subdirectory() -> None:
+    source = _workflow_source()
+
+    assert "dataform_pipeline_path" in source
+    assert "codeCompilationConfig" in source
+    assert "pipelineConfig" in source
+    assert "pipelineType: DATAFORM" in source
+    assert "path: ${dataform_pipeline_path}" in source
