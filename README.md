@@ -169,6 +169,37 @@ Recovery is deliberately non-destructive: ambiguous situations are surfaced for 
 
 See [ADR-010](architecture/decisions/ADR-010-Persist%20Source-Level%20Historical%20Replay%20State%20and%20Derive%20Date-Level%20Completion.md) for the detailed replay and recovery architecture.
 
+### Production Orchestration
+
+Mercury is being operationalised through a governed production execution path that keeps scheduling, ingestion, readiness validation, and analytical transformation as separate control boundaries.
+
+The source-controlled production implementation currently provides:
+
+- a validated daily ingestion command;
+- externalised runtime configuration;
+- PII-safe structured execution results;
+- a containerised, non-root ingestion runtime;
+- durable delivery-readiness evaluation;
+- separate scheduled and manual execution modes;
+- a historical simulation clock for incremental Olist processing;
+- workflow-controlled Cloud Run execution;
+- ingestion-to-transformation dependency gates;
+- explicit Dataform compilation and execution gates;
+- known terminal outcomes for successful, failed, blocked, and no-work executions;
+- automated runtime, readiness, CLI, and workflow contract tests.
+
+For Olist, Mercury preserves the incremental simulation established during local development. Records assigned to historical delivery date `D` are processed with simulated ingestion date `D + 1 day`. Scheduled execution advances through the bounded historical range one incomplete delivery date at a time rather than loading the entire dataset in one operation.
+
+The workflow permits Dataform execution only when:
+
+1. the ingestion job terminates successfully;
+2. durable metadata confirms the complete approved source set for the delivery date;
+3. Dataform compilation succeeds.
+
+The architecture and runtime contracts are implemented in source control. Cloud infrastructure deployment and end-to-end production validation remain Phase 4 work and must not be interpreted as complete.
+
+See [ADR-014](architecture/decisions/ADR-014-Orchestrate-Production-Execution-with-Cloud-Workflows.md), the [production platform design](architecture/designs/production_platform_design.md), and the [Olist production runtime contract](architecture/designs/olist_production_runtime_contract.md).
+
 ### Analytics Engineering
 
 Mercury standardises Raw data before it enters business modelling.
@@ -276,10 +307,6 @@ Mercury is guided by a small set of platform principles:
 - apply least privilege to each workload independently;
 - document significant architectural decisions.
 
-## Roadmap
-
-Mercury is being developed incrementally.
-
 ```text
 Phase 0 — Foundation                 [x]
         ↓
@@ -289,32 +316,46 @@ Phase 2 — Cloud Raw Platform         [x]
         ↓
 Phase 3 — Analytics Engineering      [x]
         ↓
-Phase 4 — Production Platform
+Phase 4 — Production Platform        [~]
         ↓
-Phase 5 — Data Products
+Phase 5 — Data Products              [ ]
 ```
 
 ## Current Focus
 
-Mercury has completed **Phase 3 — Analytics Engineering**.
+Mercury is currently implementing **Phase 4 — Production Platform**.
 
-The eight Olist Raw sources now progress through governed staging and canonical layers. The implemented canonical graph contains five dimensions, four facts, one bridge, and four intermediate relations with explicit grains, deterministic keys, source traceability, anomaly dispositions, reconciliation controls, and join-amplification safeguards.
+The production architecture, runtime commands, durable readiness gate, historical simulation clock, container definition, governed workflow, automated contract tests, and source-specific Olist runtime contract are implemented in source control.
 
-The complete Dataform project compiles successfully. All canonical relations and blocking assertions have been dry-run and executed, and all 13 non-blocking quality observations remain operational.
+The scheduled production path is designed to:
 
-Mercury is now preparing for **Phase 4 — Production Platform**, which will operationalise the platform through scheduled execution, persistent quality history, monitoring, alerting, CI/CD, and production-oriented runbooks.
+1. resolve the next eligible historical Olist delivery date;
+2. execute one finite ingestion job;
+3. require successful job termination;
+4. verify durable completion of the exact approved source set;
+5. compile the Dataform project;
+6. execute staging, canonical models, and governed quality controls;
+7. finish with an explicit terminal result.
+
+This preserves Mercury's incremental Olist simulation: historical source activity for delivery date `D` is treated as arriving on ingestion date `D + 1 day`. The resulting Raw, staging, and canonical layers can therefore evolve incrementally as they would for a daily API source.
 
 The next major steps are:
 
 ```text
-Production Runtime and Scheduling
+Reconcile Authoritative Terraform State
         ↓
-Quality Monitoring and Alerting
+Provision Runtime Infrastructure and IAM
         ↓
-CI/CD and Operational Readiness
+Build and Deploy the Cloud Run Image
         ↓
-Reusable Data Products
+Deploy and Validate the Production Workflow
+        ↓
+Add Scheduling, Monitoring, and Alerting
+        ↓
+Introduce CI/CD and Operational Runbooks
 ```
+
+Infrastructure deployment has not yet been completed. Terraform-dependent changes remain intentionally paused until the authoritative state is safely reconciled and verified.
 
 Detailed implementation status and upcoming work are maintained in [ROADMAP.md](ROADMAP.md).
 

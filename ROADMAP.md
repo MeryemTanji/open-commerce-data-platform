@@ -354,34 +354,105 @@ Phase 3 is complete because:
 
 ### Phase 4 — Production Platform
 
-**Status**: [ ] Planned
+**Status**: [~] In progress
 
-Phase 4 will operationalise Mercury beyond local development and manually initiated cloud execution.
+Phase 4 operationalises Mercury beyond local development and manually initiated cloud execution.
+
+The production architecture and its source-controlled runtime components are implemented. Infrastructure provisioning, deployment, end-to-end cloud validation, monitoring, and operational automation remain in progress.
+
+#### Architecture & Runtime Contracts
+
+- [x] Define the production orchestration architecture
+- [x] Adopt Cloud Scheduler, Cloud Workflows, Cloud Run Jobs, and Dataform as separate runtime boundaries
+- [x] Define least-privilege workload identity boundaries
+- [x] Define production runtime configuration
+- [x] Define scheduled-day and manual-day execution modes
+- [x] Define the Olist production runtime contract
+- [x] Preserve the Olist `ingestion_date = delivery_date + 1 day` simulation rule
+- [x] Define the durable historical simulation clock
+- [x] Define transformation release and failure gates
+- [x] Document the production architecture and implementation status
+
+The governing architecture is recorded in [ADR-014](architecture/decisions/ADR-014-Orchestrate-Production-Execution-with-Cloud-Workflows.md).
+
+The detailed platform contract is documented in [production_platform_design.md](architecture/designs/production_platform_design.md), while source-specific Olist behavior is documented in [olist_production_runtime_contract.md](architecture/designs/olist_production_runtime_contract.md).
+
+#### Production Ingestion Runtime
+
+- [x] Refactor Olist runner composition for reuse
+- [x] Replace hardcoded infrastructure identifiers with validated runtime configuration
+- [x] Implement durable GCS source materialisation
+- [x] Implement the production `run-day` command
+- [x] Emit PII-safe structured execution summaries
+- [x] Expose replay `run_id` in daily execution results
+- [x] Define production exit-code semantics
+- [x] Package the ingestion runtime for Cloud Run
+- [x] Run the container as a non-root identity
+- [x] Add automated tests for production runtime behavior
+- [ ] Build and validate the container image in an approved container-capable environment
+- [ ] Publish the production image to Artifact Registry
+- [ ] Deploy the ingestion runtime as a Cloud Run Job
+- [ ] Validate keyless Cloud Run authentication
+- [ ] Validate one controlled production delivery date
+
+#### Durable Readiness Gate
+
+- [x] Implement source-level durable delivery-readiness evaluation
+- [x] Require the exact approved daily source set
+- [x] Implement the `check-readiness` production command
+- [x] Distinguish invocation success from durable date completion
+- [x] Block Dataform when durable completion evidence is incomplete
+- [x] Add automated readiness and CLI contract tests
+- [ ] Validate the readiness gate against deployed BigQuery metadata
+- [ ] Capture production readiness evidence
+
+#### Production Workflow
+
+- [x] Implement a source-controlled Cloud Workflows definition
+- [x] Support separate manual and scheduled execution modes
+- [x] Resolve scheduled dates through the durable historical simulation clock
+- [x] Select the earliest incomplete historical delivery date
+- [x] Stop cleanly when the configured simulation range is complete
+- [x] Invoke `run-day` through the Cloud Run Jobs API
+- [x] require successful ingestion job termination
+- [x] invoke the durable `check-readiness` gate
+- [x] stop before transformation when readiness fails
+- [x] compile the Dataform project from its repository subdirectory
+- [x] block execution when Dataform compilation reports errors
+- [x] invoke Dataform only after durable ingestion completion
+- [x] poll Dataform to a known terminal state
+- [x] add automated workflow contract tests
+- [ ] Deploy the Cloud Workflow
+- [ ] Validate the workflow with one manual historical date
+- [ ] Validate scheduled simulation-clock progression
+- [ ] Validate ingestion and readiness failure propagation
+- [ ] Validate Dataform compilation and assertion failure propagation
+- [ ] Configure Cloud Scheduler to invoke the approved workflow
 
 #### Infrastructure as Code
 
-Terraform adoption has begun during Phase 3 where infrastructure ownership is required for Analytics Engineering.
-
-Phase 4 will expand infrastructure management to the broader Mercury runtime.
+Terraform adoption began during Phase 3 and is being expanded to the production runtime.
 
 - [x] Introduce Terraform
-- [x] Bring staging dataset under Terraform management
-- [ ] Evaluate existing GCP resources for Terraform adoption
-- [ ] Manage production runtime infrastructure through Terraform
-- [ ] Manage production IAM through Infrastructure as Code
+- [x] Bring staging and canonical datasets under Terraform management
+- [x] Configure a versioned remote Terraform-state backend
+- [x] Define production infrastructure ownership boundaries
+- [ ] Reconcile the authoritative Terraform state across development machines
+- [ ] Evaluate remaining existing GCP resources for Terraform adoption
+- [ ] Provision Artifact Registry through Terraform
+- [ ] Provision production runtime service accounts
+- [ ] Manage production IAM through Terraform
+- [ ] Provision the Cloud Run Job
+- [ ] Provision the Cloud Workflow
+- [ ] Provision Cloud Scheduler
+- [ ] Validate that the Terraform plan contains no unintended infrastructure changes
 
-#### Runtime & Scheduling
-
-- [ ] Deploy ingestion runtime to Cloud Run
-- [ ] Implement scheduled ingestion execution with Cloud Scheduler
-- [ ] Implement scheduled Dataform execution
-- [ ] Coordinate ingestion-to-transformation dependencies
-- [ ] Define production runtime configuration
-- [ ] Validate keyless workload authentication
+Terraform changes that depend on authoritative state reconciliation must not be applied until the remote state has been safely established and verified.
 
 #### Observability
 
-- [ ] Implement cloud logging
+- [ ] Implement structured cloud logging
+- [ ] Correlate workflow, ingestion, readiness, and Dataform executions
 - [ ] Implement operational monitoring
 - [ ] Persist historical data-quality evaluation results
 - [ ] Implement approved-baseline and threshold evaluation
@@ -395,25 +466,38 @@ Phase 4 will expand infrastructure management to the broader Mercury runtime.
 #### CI/CD
 
 - [ ] Introduce GitHub Actions
-- [ ] Automate test execution
+- [ ] Automate ingestion test execution
+- [ ] Automate workflow contract validation
+- [ ] Automate Dataform compilation
 - [ ] Automate formatting and linting
-- [ ] Add dependency/security scanning
-- [ ] Add infrastructure validation
-- [ ] Define deployment workflow
+- [ ] Add dependency and security scanning
+- [ ] Add Terraform validation
+- [ ] Define the controlled deployment workflow
 
 #### Operations
 
-- [ ] Create recovery runbook
-- [ ] Create manual-review runbook
-- [ ] Create data-quality response runbook
+- [ ] Create a production execution runbook
+- [ ] Create a recovery runbook
+- [ ] Create a manual-review runbook
+- [ ] Create a data-quality response runbook
 - [ ] Define operational escalation paths
 - [ ] Define baseline and threshold approval procedures
 - [ ] Define production retention policies
-- [ ] Create developer/operations documentation where required
+- [ ] Record deployed-resource and execution-validation evidence
 
 #### Phase 4 Exit Criteria
 
-Phase 4 is complete when Mercury can be deployed, scheduled, monitored, validated, and operated through reproducible production-oriented workflows.
+Phase 4 is complete when:
+
+- the production infrastructure is reproducibly managed;
+- the ingestion image is deployed as a Cloud Run Job;
+- Cloud Scheduler invokes the governed Cloud Workflow;
+- scheduled execution advances the historical simulation one approved delivery date at a time;
+- Dataform executes only after durable ingestion readiness is confirmed;
+- blocking and non-blocking quality outcomes are operationally observable;
+- failures and retries preserve durable evidence and idempotency;
+- the full path has been validated with recorded, security-safe evidence;
+- monitoring, CI/CD, and operational runbooks are available.
 
 ### Phase 5 — Data Products
 
