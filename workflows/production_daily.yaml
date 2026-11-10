@@ -1,0 +1,154 @@
+main:
+  params: [args]
+
+  steps:
+    - initialize:
+        assign:
+          - request: ${default(args, {})}
+          - project_id: ${sys.get_env("GOOGLE_CLOUD_PROJECT_ID")}
+          - region: ${sys.get_env("GOOGLE_CLOUD_LOCATION")}
+          - workflow_execution_id: ${sys.get_env("GOOGLE_CLOUD_WORKFLOW_EXECUTION_ID")}
+          - delivery_date: ${map.get(request, "delivery_date")}
+          - ingestion_job_name: ${map.get(request, "ingestion_job_name")}
+          - dataform_repository: ${map.get(request, "dataform_repository")}
+          - dataform_git_commitish: ${default(map.get(request, "dataform_git_commitish"), "main")}
+          - dataform_service_account: ${map.get(request, "dataform_service_account")}
+          - cloud_run_timeout_seconds: ${default(map.get(request, "cloud_run_timeout_seconds"), 3600)}
+          - dataform_timeout_seconds: ${default(map.get(request, "dataform_timeout_seconds"), 3600)}
+          - dataform_poll_seconds: ${default(map.get(request, "dataform_poll_seconds"), 10)}
+          - cloud_run_job: ${"projects/" + project_id + "/locations/" + region + "/jobs/" + ingestion_job_name}
+          - dataform_parent: ${"projects/" + project_id + "/locations/" + region + "/repositories/" + dataform_repository}
+
+    - validate_request:
+        switch:
+          - condition: ${delivery_date == null}
+            next: raise_invalid_request
+          - condition: ${ingestion_job_name == null}
+            next: raise_invalid_request
+          - condition: ${dataform_repository == null}
+            next: raise_invalid_request
+          - condition: ${dataform_service_account == null}
+            next: raise_invalid_request
+        next: run_ingestion
+
+    - raise_invalid_request:
+        raise: "INVALID_REQUEST: delivery_date, ingestion_job_name, dataform_repository, and dataform_service_account are required"
+
+    - run_ingestion:
+        call: googleapis.run.v2.projects.locations.jobs.run
+        args:
+          name: ${cloud_run_job}
+          body:
+            overrides:
+              containerOverrides:
+                - args: ${["run-day", "--delivery-date", delivery_date]}
+                  env:
+                    - name: MERCURY_WORKFLOW_EXECUTION_ID
+                      value: ${workflow_execution_id}
+          connector_params:
+            timeout: ${cloud_run_timeout_seconds}
+        result: ingestion_execution
+
+    - check_durable_readiness:
+        call: googleapis.run.v2.projects.locations.jobs.run
+        args:
+          name: ${cloud_run_job}
+          body:
+            overrides:
+              containerOverrides:
+                - args: ${["check-readiness", "--delivery-date", delivery_date]}
+                  env:
+                    - name: MERCURY_WORKFLOW_EXECUTION_ID
+                      value: ${workflow_execution_id}
+          connector_params:
+            timeout: ${cloud_run_timeout_seconds}
+        result: readiness_execution
+
+    - create_dataform_compilation:
+        call: http.post
+        args:
+          url: ${"https://dataform.googleapis.com/v1/" + dataform_parent + "/compilationResults"}
+          auth:
+            type: OAuth2
+          body:
+            gitCommitish: ${dataform_git_commitish}
+        retry: ${http.default_retry}
+        result: dataform_compilation
+
+    - check_dataform_compilation:
+        switch:
+          - condition: ${len(default(map.get(dataform_compilation.body, "compilationErrors"), [])) > 0}
+            next: raise_dataform_compilation_failure
+        next: create_dataform_invocation
+
+    - raise_dataform_compilation_failure:
+        raise: "DATAFORM_COMPILATION_FAILED: compilation returned one or more governed errors"
+
+    - create_dataform_invocation:
+        call: http.post
+        args:
+          url: ${"https://dataform.googleapis.com/v1/" + dataform_parent + "/workflowInvocations"}
+          auth:
+            type: OAuth2
+          body:
+            compilationResult: ${dataform_compilation.body.name}
+            invocationConfig:
+              serviceAccount: ${dataform_service_account}
+        result: dataform_invocation
+
+    - initialize_dataform_poll:
+        assign:
+          - dataform_deadline: ${sys.now() + dataform_timeout_seconds}
+          - dataform_invocation_name: ${dataform_invocation.body.name}
+
+    - get_dataform_invocation:
+        call: http.get
+        args:
+          url: ${"https://dataform.googleapis.com/v1/" + dataform_invocation_name}
+          auth:
+            type: OAuth2
+        result: dataform_status
+
+    - evaluate_dataform_state:
+        switch:
+          - condition: ${dataform_status.body.state == "SUCCEEDED"}
+            next: complete
+          - condition: ${dataform_status.body.state == "FAILED"}
+            next: raise_dataform_failure
+          - condition: ${dataform_status.body.state == "CANCELLED"}
+            next: raise_dataform_cancelled
+          - condition: ${sys.now() >= dataform_deadline}
+            next: raise_dataform_timeout
+          - condition: ${dataform_status.body.state == "RUNNING"}
+            next: wait_for_dataform
+          - condition: ${dataform_status.body.state == "CANCELING"}
+            next: wait_for_dataform
+        next: raise_unknown_dataform_state
+
+    - wait_for_dataform:
+        call: sys.sleep
+        args:
+          seconds: ${dataform_poll_seconds}
+        next: get_dataform_invocation
+
+    - raise_dataform_failure:
+        raise: "DATAFORM_INVOCATION_FAILED: the governed transformation graph failed"
+
+    - raise_dataform_cancelled:
+        raise: "DATAFORM_INVOCATION_CANCELLED: the governed transformation graph was cancelled"
+
+    - raise_dataform_timeout:
+        raise: "DATAFORM_INVOCATION_TIMEOUT: the governed transformation graph exceeded its execution deadline"
+
+    - raise_unknown_dataform_state:
+        raise: "DATAFORM_UNKNOWN_STATE: the transformation invocation returned an unsupported state"
+
+    - complete:
+        return:
+          workflow_execution_id: ${workflow_execution_id}
+          delivery_date: ${delivery_date}
+          ingestion_status: "succeeded"
+          readiness_status: "ready"
+          dataform_status: ${dataform_status.body.state}
+          compilation_result: ${dataform_compilation.body.name}
+          workflow_invocation: ${dataform_invocation_name}
