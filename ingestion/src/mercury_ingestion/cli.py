@@ -1,14 +1,12 @@
 """Production command-line entry point for Mercury ingestion.
 
-The adapter in this module is intentionally thin. It validates the
-requested unit of work, loads production runtime configuration,
-materializes governed Olist source input into ephemeral storage,
-constructs the existing replay runner, executes one logical delivery
-date, and emits one PII-safe structured terminal summary.
+This module exposes two thin production adapters:
+
+- ``run-day`` executes ingestion for one logical delivery date;
+- ``check-readiness`` verifies durable completion before transformation.
 
 All ingestion, simulation, Raw landing, warehouse loading, replay-state,
-and provenance behavior remains owned by the existing Mercury
-components composed here.
+and provenance behavior remains owned by Mercury's existing components.
 """
 
 from __future__ import annotations
@@ -22,12 +20,20 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import Any
 
+from mercury_ingestion.orchestration.bigquery_replay_state import (
+    BigQueryReplayStateStore,
+)
 from mercury_ingestion.orchestration.replay import (
+    DAILY_SOURCE_OBJECTS,
     HistoricalReplayError,
 )
 from mercury_ingestion.runtime.config import (
     RuntimeConfig,
     RuntimeConfigurationError,
+)
+from mercury_ingestion.runtime.delivery_readiness import (
+    DeliveryReadinessResult,
+    evaluate_delivery_readiness,
 )
 from mercury_ingestion.runtime.gcs_source_materializer import (
     GCSSourceMaterializer,
@@ -66,10 +72,22 @@ class _ProductionArgumentParser(argparse.ArgumentParser):
         raise CommandInputError(message)
 
 
+def _add_delivery_date_argument(
+    parser: argparse.ArgumentParser,
+) -> None:
+    parser.add_argument(
+        "--delivery-date",
+        required=True,
+        help="Logical delivery date in YYYY-MM-DD format.",
+    )
+
+
 def _build_parser() -> argparse.ArgumentParser:
     parser = _ProductionArgumentParser(
         prog="python -m mercury_ingestion.cli",
-        description="Execute one Mercury production ingestion date.",
+        description=(
+            "Execute Mercury production ingestion and readiness commands."
+        ),
     )
 
     subparsers = parser.add_subparsers(
@@ -81,11 +99,15 @@ def _build_parser() -> argparse.ArgumentParser:
         "run-day",
         help="Execute one logical delivery date.",
     )
-    run_day_parser.add_argument(
-        "--delivery-date",
-        required=True,
-        help="Logical delivery date in YYYY-MM-DD format.",
+    _add_delivery_date_argument(run_day_parser)
+
+    readiness_parser = subparsers.add_parser(
+        "check-readiness",
+        help=(
+            "Verify durable completion before downstream transformation."
+        ),
     )
+    _add_delivery_date_argument(readiness_parser)
 
     return parser
 
@@ -136,6 +158,37 @@ def _empty_summary(
     }
 
 
+def _empty_readiness_summary(
+    *,
+    delivery_date: date | None,
+    final_status: str,
+    failure_category: str | None,
+    config: RuntimeConfig | None = None,
+) -> dict[str, Any]:
+    return {
+        "workflow_execution_id": (
+            config.workflow_execution_id
+            if config is not None
+            else None
+        ),
+        "environment": (
+            config.environment if config is not None else None
+        ),
+        "delivery_date": (
+            delivery_date.isoformat()
+            if delivery_date is not None
+            else None
+        ),
+        "expected_source_objects": [],
+        "completed_source_objects": [],
+        "missing_source_objects": [],
+        "unexpected_source_objects": [],
+        "is_ready": False,
+        "final_status": final_status,
+        "failure_category": failure_category,
+    }
+
+
 def _emit_summary(summary: dict[str, Any]) -> None:
     """Write exactly one compact structured terminal summary."""
 
@@ -169,9 +222,8 @@ def _successful_summary(
 
     # A normally returned day result means the date is durably complete.
     # This deliberately does not infer failure from this invocation's
-    # warehouse_results: an idempotent replay may encounter immutable
-    # artifacts that already succeeded in an earlier invocation while
-    # durable completion correctly remains true.
+    # warehouse results. An idempotent replay may encounter immutable
+    # artifacts that succeeded during an earlier invocation.
     return {
         "workflow_execution_id": config.workflow_execution_id,
         "ingestion_run_id": result.run_id,
@@ -199,7 +251,9 @@ def _incomplete_summary(
         )
 
     source_count = len(partial_result.source_batch.deliveries)
-    completed_source_count = len(partial_result.warehouse_results)
+    completed_source_count = len(
+        partial_result.warehouse_results
+    )
 
     return {
         "workflow_execution_id": config.workflow_execution_id,
@@ -216,19 +270,54 @@ def _incomplete_summary(
     }
 
 
+def _readiness_summary(
+    *,
+    config: RuntimeConfig,
+    result: DeliveryReadinessResult,
+) -> dict[str, Any]:
+    return {
+        "workflow_execution_id": config.workflow_execution_id,
+        "environment": config.environment,
+        "delivery_date": result.delivery_date.isoformat(),
+        "expected_source_objects": list(
+            result.expected_source_objects
+        ),
+        "completed_source_objects": list(
+            result.completed_source_objects
+        ),
+        "missing_source_objects": list(
+            result.missing_source_objects
+        ),
+        "unexpected_source_objects": list(
+            result.unexpected_source_objects
+        ),
+        "is_ready": result.is_ready,
+        "final_status": (
+            "ready" if result.is_ready else "blocked"
+        ),
+        "failure_category": (
+            None if result.is_ready else "date_incomplete"
+        ),
+    }
+
+
 def _execute_run_day(
     *,
     config: RuntimeConfig,
     delivery_date: date,
 ) -> Any:
-    with TemporaryDirectory(prefix="mercury-ingestion-") as workspace:
+    with TemporaryDirectory(
+        prefix="mercury-ingestion-"
+    ) as workspace:
         workspace_path = Path(workspace)
         source_directory = workspace_path / "source"
         simulation_directory = workspace_path / "simulation"
 
         materializer = GCSSourceMaterializer(
             source_uri=config.source_input_uri,
-            required_filenames=tuple(SOURCE_FILENAMES.values()),
+            required_filenames=tuple(
+                SOURCE_FILENAMES.values()
+            ),
             project_id=config.project_id,
         )
         materializer.materialize(source_directory)
@@ -246,41 +335,63 @@ def _execute_run_day(
         return runner.run_day(delivery_date)
 
 
-def main(argv: Sequence[str] | None = None) -> int:
-    """Execute the requested production command and return its exit code."""
+def _execute_readiness_check(
+    *,
+    config: RuntimeConfig,
+    delivery_date: date,
+) -> DeliveryReadinessResult:
+    replay_state_store = BigQueryReplayStateStore(
+        project_id=config.project_id,
+        dataset_id=config.metadata_dataset,
+        location=config.region,
+    )
 
-    arguments = list(sys.argv[1:] if argv is None else argv)
+    return evaluate_delivery_readiness(
+        replay_state_store=replay_state_store,
+        delivery_date=delivery_date,
+        expected_source_objects=DAILY_SOURCE_OBJECTS,
+    )
 
+
+def _run_readiness_command(
+    *,
+    config: RuntimeConfig,
+    delivery_date: date,
+) -> int:
     try:
-        namespace = _build_parser().parse_args(arguments)
-
-        if namespace.command != "run-day":
-            raise CommandInputError("unsupported command")
-
-        delivery_date = _parse_delivery_date(namespace.delivery_date)
-
-    except CommandInputError:
-        _emit_summary(
-            _empty_summary(
-                delivery_date=None,
-                final_status="invalid_request",
-                failure_category="command_input",
-            )
+        result = _execute_readiness_check(
+            config=config,
+            delivery_date=delivery_date,
         )
-        return EXIT_INVALID_REQUEST
-
-    try:
-        config = RuntimeConfig.from_environment()
-    except RuntimeConfigurationError:
+    except Exception:
         _emit_summary(
-            _empty_summary(
+            _empty_readiness_summary(
                 delivery_date=delivery_date,
-                final_status="invalid_request",
-                failure_category="runtime_configuration",
+                final_status="failed",
+                failure_category="readiness_evaluation",
+                config=config,
             )
         )
-        return EXIT_INVALID_REQUEST
+        return EXIT_EXECUTION_FAILURE
 
+    _emit_summary(
+        _readiness_summary(
+            config=config,
+            result=result,
+        )
+    )
+
+    if result.is_ready:
+        return EXIT_SUCCESS
+
+    return EXIT_INCOMPLETE
+
+
+def _run_ingestion_command(
+    *,
+    config: RuntimeConfig,
+    delivery_date: date,
+) -> int:
     try:
         result = _execute_run_day(
             config=config,
@@ -298,13 +409,16 @@ def main(argv: Sequence[str] | None = None) -> int:
             )
             return EXIT_INCOMPLETE
 
-        summary = _empty_summary(
-            delivery_date=delivery_date,
-            final_status="failed",
-            failure_category=_safe_replay_category(exc.stage),
-            config=config,
+        _emit_summary(
+            _empty_summary(
+                delivery_date=delivery_date,
+                final_status="failed",
+                failure_category=_safe_replay_category(
+                    exc.stage
+                ),
+                config=config,
+            )
         )
-        _emit_summary(summary)
         return EXIT_EXECUTION_FAILURE
 
     except FileNotFoundError:
@@ -337,6 +451,73 @@ def main(argv: Sequence[str] | None = None) -> int:
         )
     )
     return EXIT_SUCCESS
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    """Execute the requested production command and return its exit code."""
+
+    arguments = list(
+        sys.argv[1:] if argv is None else argv
+    )
+
+    try:
+        namespace = _build_parser().parse_args(arguments)
+        delivery_date = _parse_delivery_date(
+            namespace.delivery_date
+        )
+    except CommandInputError:
+        _emit_summary(
+            _empty_summary(
+                delivery_date=None,
+                final_status="invalid_request",
+                failure_category="command_input",
+            )
+        )
+        return EXIT_INVALID_REQUEST
+
+    try:
+        config = RuntimeConfig.from_environment()
+    except RuntimeConfigurationError:
+        if namespace.command == "check-readiness":
+            _emit_summary(
+                _empty_readiness_summary(
+                    delivery_date=delivery_date,
+                    final_status="invalid_request",
+                    failure_category="runtime_configuration",
+                )
+            )
+        else:
+            _emit_summary(
+                _empty_summary(
+                    delivery_date=delivery_date,
+                    final_status="invalid_request",
+                    failure_category="runtime_configuration",
+                )
+            )
+
+        return EXIT_INVALID_REQUEST
+
+    if namespace.command == "check-readiness":
+        return _run_readiness_command(
+            config=config,
+            delivery_date=delivery_date,
+        )
+
+    if namespace.command == "run-day":
+        return _run_ingestion_command(
+            config=config,
+            delivery_date=delivery_date,
+        )
+
+    _emit_summary(
+        _empty_summary(
+            delivery_date=delivery_date,
+            final_status="invalid_request",
+            failure_category="command_input",
+            config=config,
+        )
+    )
+    return EXIT_INVALID_REQUEST
 
 
 if __name__ == "__main__":
