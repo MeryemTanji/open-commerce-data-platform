@@ -8,7 +8,11 @@ main:
           - project_id: ${sys.get_env("GOOGLE_CLOUD_PROJECT_ID")}
           - region: ${sys.get_env("GOOGLE_CLOUD_LOCATION")}
           - workflow_execution_id: ${sys.get_env("GOOGLE_CLOUD_WORKFLOW_EXECUTION_ID")}
-          - delivery_date: ${map.get(request, "delivery_date")}
+          - execution_mode: ${map.get(request, "execution_mode")}
+          - requested_delivery_date: ${map.get(request, "delivery_date")}
+          - simulation_start_date: ${map.get(request, "simulation_start_date")}
+          - simulation_end_date: ${map.get(request, "simulation_end_date")}
+          - metadata_dataset: ${map.get(request, "metadata_dataset")}
           - ingestion_job_name: ${map.get(request, "ingestion_job_name")}
           - dataform_repository: ${map.get(request, "dataform_repository")}
           - dataform_git_commitish: ${default(map.get(request, "dataform_git_commitish"), "main")}
@@ -19,9 +23,9 @@ main:
           - cloud_run_job: ${"projects/" + project_id + "/locations/" + region + "/jobs/" + ingestion_job_name}
           - dataform_parent: ${"projects/" + project_id + "/locations/" + region + "/repositories/" + dataform_repository}
 
-    - validate_request:
+    - validate_common_request:
         switch:
-          - condition: ${delivery_date == null}
+          - condition: ${execution_mode == null}
             next: raise_invalid_request
           - condition: ${ingestion_job_name == null}
             next: raise_invalid_request
@@ -29,10 +33,137 @@ main:
             next: raise_invalid_request
           - condition: ${dataform_service_account == null}
             next: raise_invalid_request
+        next: select_execution_mode
+
+    - select_execution_mode:
+        switch:
+          - condition: ${execution_mode == "manual"}
+            next: resolve_manual_delivery_date
+          - condition: ${execution_mode == "scheduled"}
+            next: validate_scheduled_request
+        next: raise_invalid_execution_mode
+
+    - resolve_manual_delivery_date:
+        switch:
+          - condition: ${requested_delivery_date == null}
+            next: raise_invalid_manual_request
+        assign:
+          - delivery_date: ${requested_delivery_date}
+        next: run_ingestion
+
+    - validate_scheduled_request:
+        switch:
+          - condition: ${requested_delivery_date != null}
+            next: raise_invalid_scheduled_request
+          - condition: ${simulation_start_date == null}
+            next: raise_invalid_scheduled_request
+          - condition: ${simulation_end_date == null}
+            next: raise_invalid_scheduled_request
+          - condition: ${metadata_dataset == null}
+            next: raise_invalid_scheduled_request
+          - condition: ${simulation_start_date > simulation_end_date}
+            next: raise_invalid_scheduled_request
+        next: resolve_next_scheduled_delivery
+
+    - resolve_next_scheduled_delivery:
+        call: googleapis.bigquery.v2.jobs.query
+        args:
+          projectId: ${project_id}
+          body:
+            location: ${region}
+            useLegacySql: false
+            useQueryCache: false
+            timeoutMs: 30000
+            parameterMode: NAMED
+            queryParameters:
+              - name: simulation_start_date
+                parameterType:
+                  type: DATE
+                parameterValue:
+                  value: ${simulation_start_date}
+              - name: simulation_end_date
+                parameterType:
+                  type: DATE
+                parameterValue:
+                  value: ${simulation_end_date}
+            query: ${
+                "WITH required_dates AS (
+                   SELECT delivery_date
+                   FROM UNNEST(
+                     GENERATE_DATE_ARRAY(
+                       @simulation_start_date,
+                       @simulation_end_date
+                     )
+                   ) AS delivery_date
+                 ),
+                 completed_sources AS (
+                   SELECT
+                     delivery_date,
+                     COUNT(DISTINCT source_object)
+                       AS completed_source_count
+                   FROM `" + project_id + "." + metadata_dataset
+                     + ".historical_replay_state`
+                   WHERE status = 'success'
+                     AND stage = 'warehouse'
+                     AND source_object IN (
+                       'orders',
+                       'order_items',
+                       'payments',
+                       'reviews'
+                     )
+                     AND delivery_date BETWEEN
+                       @simulation_start_date
+                       AND @simulation_end_date
+                   GROUP BY delivery_date
+                 )
+                 SELECT
+                   FORMAT_DATE(
+                     '%F',
+                     required_dates.delivery_date
+                   ) AS delivery_date
+                 FROM required_dates
+                 LEFT JOIN completed_sources
+                   USING (delivery_date)
+                 WHERE COALESCE(
+                   completed_source_count,
+                   0
+                 ) < 4
+                 ORDER BY delivery_date
+                 LIMIT 1"
+                }
+        result: next_delivery_query
+
+    - check_simulation_clock_query:
+        switch:
+          - condition: ${default(map.get(next_delivery_query, "jobComplete"), false) != true}
+            next: raise_simulation_clock_failure
+        next: check_next_scheduled_delivery
+
+    - check_next_scheduled_delivery:
+        switch:
+          - condition: ${len(default(map.get(next_delivery_query, "rows"), [])) == 0}
+            next: complete_no_work_remaining
+        next: assign_scheduled_delivery_date
+
+    - assign_scheduled_delivery_date:
+        assign:
+          - delivery_date: ${next_delivery_query.rows[0].f[0].v}
         next: run_ingestion
 
     - raise_invalid_request:
-        raise: "INVALID_REQUEST: delivery_date, ingestion_job_name, dataform_repository, and dataform_service_account are required"
+        raise: "INVALID_REQUEST: execution_mode, ingestion_job_name, dataform_repository, and dataform_service_account are required"
+
+    - raise_invalid_execution_mode:
+        raise: "INVALID_EXECUTION_MODE: execution_mode must be manual or scheduled"
+
+    - raise_invalid_manual_request:
+        raise: "INVALID_MANUAL_REQUEST: manual execution requires an explicit delivery_date"
+
+    - raise_invalid_scheduled_request:
+        raise: "INVALID_SCHEDULED_REQUEST: scheduled execution requires a valid simulation range and metadata dataset, and must not provide delivery_date"
+
+    - raise_simulation_clock_failure:
+        raise: "SIMULATION_CLOCK_FAILURE: the next historical delivery date could not be resolved"
 
     - run_ingestion:
         call: googleapis.run.v2.projects.locations.jobs.run
@@ -143,12 +274,22 @@ main:
     - raise_unknown_dataform_state:
         raise: "DATAFORM_UNKNOWN_STATE: the transformation invocation returned an unsupported state"
 
+    - complete_no_work_remaining:
+        return:
+          workflow_execution_id: ${workflow_execution_id}
+          execution_mode: ${execution_mode}
+          simulation_start_date: ${simulation_start_date}
+          simulation_end_date: ${simulation_end_date}
+          final_status: "no_work_remaining"
+
     - complete:
         return:
           workflow_execution_id: ${workflow_execution_id}
+          execution_mode: ${execution_mode}
           delivery_date: ${delivery_date}
           ingestion_status: "succeeded"
           readiness_status: "ready"
           dataform_status: ${dataform_status.body.state}
           compilation_result: ${dataform_compilation.body.name}
           workflow_invocation: ${dataform_invocation_name}
+          final_status: "succeeded"

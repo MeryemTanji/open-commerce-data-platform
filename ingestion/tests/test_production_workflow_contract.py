@@ -26,9 +26,15 @@ def test_ingestion_and_readiness_commands_are_ordered() -> None:
 
     run_day_position = source.index("run-day")
     readiness_position = source.index("check-readiness")
-    dataform_position = source.index("create_dataform_compilation")
+    dataform_position = source.index(
+        "create_dataform_compilation"
+    )
 
-    assert run_day_position < readiness_position < dataform_position
+    assert (
+        run_day_position
+        < readiness_position
+        < dataform_position
+    )
 
 
 def test_cloud_run_job_calls_use_v2_connector() -> None:
@@ -96,3 +102,39 @@ def test_workflow_has_no_environment_specific_resource_ids() -> None:
 
     assert "mercury-data-platform-dev" not in source
     assert "mercury-dataform@" not in source
+
+
+def test_manual_and_scheduled_resolution_are_distinct() -> None:
+    source = _workflow_source()
+
+    assert "execution_mode" in source
+    assert '"manual"' in source
+    assert '"scheduled"' in source
+
+    assert "resolve_manual_delivery_date" in source
+    assert "resolve_next_scheduled_delivery" in source
+
+    # Historical simulation dates must not be derived from the current
+    # real-world calendar.
+    assert "sys.now() - 86400" not in source
+
+
+def test_scheduled_mode_uses_durable_simulation_clock() -> None:
+    source = _workflow_source()
+
+    assert "simulation_start_date" in source
+    assert "simulation_end_date" in source
+    assert "metadata_dataset" in source
+
+    assert (
+        "googleapis.bigquery.v2.jobs.query"
+        in source
+    )
+    assert "GENERATE_DATE_ARRAY" in source
+    assert "historical_replay_state" in source
+    assert "status = 'success'" in source
+    assert "stage = 'warehouse'" in source
+
+    assert "ORDER BY delivery_date" in source
+    assert "LIMIT 1" in source
+    assert "complete_no_work_remaining" in source
