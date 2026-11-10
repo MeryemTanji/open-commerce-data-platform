@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from datetime import date
+from datetime import date, datetime
 from types import SimpleNamespace
 
 import pytest
@@ -38,7 +38,45 @@ def _read_summary(
     assert len(lines) == 1
     assert captured.err == ""
 
-    return json.loads(lines[0])
+    event = json.loads(lines[0])
+
+    assert event.pop("event_schema_version") == "1.0"
+
+    occurred_at = event.pop("occurred_at")
+    assert isinstance(occurred_at, str)
+    assert occurred_at.endswith("Z")
+
+    parsed_timestamp = datetime.fromisoformat(
+        occurred_at.replace("Z", "+00:00")
+    )
+    assert parsed_timestamp.tzinfo is not None
+    assert parsed_timestamp.utcoffset() is not None
+
+    event_route = (
+        event.pop("event_name"),
+        event.pop("command"),
+        event.pop("stage"),
+    )
+
+    assert event_route in {
+        (
+            "mercury.readiness.terminal",
+            "check-readiness",
+            "readiness",
+        ),
+        (
+            "mercury.command.rejected",
+            "check-readiness",
+            "request_validation",
+        ),
+        (
+            "mercury.command.rejected",
+            "check-readiness",
+            "runtime_configuration",
+        ),
+    }
+
+    return event
 
 
 class TestReadyDelivery:

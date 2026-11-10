@@ -12,7 +12,6 @@ and provenance behavior remains owned by Mercury's existing components.
 from __future__ import annotations
 
 import argparse
-import json
 import sys
 from collections.abc import Sequence
 from datetime import date
@@ -41,6 +40,10 @@ from mercury_ingestion.runtime.gcs_source_materializer import (
 from mercury_ingestion.runtime.olist_runner_factory import (
     build_olist_replay_runner,
 )
+from mercury_ingestion.runtime.structured_logging import (
+    build_terminal_event,
+    emit_structured_event,
+)
 from mercury_ingestion.simulation.olist import SOURCE_FILENAMES
 
 EXIT_SUCCESS = 0
@@ -57,6 +60,13 @@ _SAFE_REPLAY_FAILURE_CATEGORIES = frozenset(
         "replay_state",
         "source_delivery",
         "warehouse",
+    }
+)
+
+_SUPPORTED_COMMANDS = frozenset(
+    {
+        "run-day",
+        "check-readiness",
     }
 )
 
@@ -128,6 +138,17 @@ def _parse_delivery_date(raw_value: str) -> date:
     return parsed
 
 
+def _safe_requested_command(
+    arguments: Sequence[str],
+) -> str:
+    """Return only an approved command name for structured output."""
+
+    if arguments and arguments[0] in _SUPPORTED_COMMANDS:
+        return arguments[0]
+
+    return "unknown"
+
+
 def _empty_summary(
     *,
     delivery_date: date | None,
@@ -189,17 +210,22 @@ def _empty_readiness_summary(
     }
 
 
-def _emit_summary(summary: dict[str, Any]) -> None:
-    """Write exactly one compact structured terminal summary."""
+def _emit_summary(
+    summary: dict[str, Any],
+    *,
+    event_name: str,
+    command: str,
+    stage: str,
+) -> None:
+    """Write one governed terminal event as compact JSON."""
 
-    print(
-        json.dumps(
-            summary,
-            sort_keys=True,
-            separators=(",", ":"),
-        ),
-        flush=True,
+    event = build_terminal_event(
+        summary=summary,
+        event_name=event_name,
+        command=command,
+        stage=stage,
     )
+    emit_structured_event(event)
 
 
 def _safe_replay_category(stage: object) -> str:
@@ -370,7 +396,10 @@ def _run_readiness_command(
                 final_status="failed",
                 failure_category="readiness_evaluation",
                 config=config,
-            )
+            ),
+            event_name="mercury.readiness.terminal",
+            command="check-readiness",
+            stage="readiness",
         )
         return EXIT_EXECUTION_FAILURE
 
@@ -378,7 +407,10 @@ def _run_readiness_command(
         _readiness_summary(
             config=config,
             result=result,
-        )
+        ),
+        event_name="mercury.readiness.terminal",
+        command="check-readiness",
+        stage="readiness",
     )
 
     if result.is_ready:
@@ -405,7 +437,10 @@ def _run_ingestion_command(
                     config=config,
                     delivery_date=delivery_date,
                     error=exc,
-                )
+                ),
+                event_name="mercury.ingestion.terminal",
+                command="run-day",
+                stage="ingestion",
             )
             return EXIT_INCOMPLETE
 
@@ -417,7 +452,10 @@ def _run_ingestion_command(
                     exc.stage
                 ),
                 config=config,
-            )
+            ),
+            event_name="mercury.ingestion.terminal",
+            command="run-day",
+            stage="ingestion",
         )
         return EXIT_EXECUTION_FAILURE
 
@@ -428,7 +466,10 @@ def _run_ingestion_command(
                 final_status="failed",
                 failure_category="source_materialization",
                 config=config,
-            )
+            ),
+            event_name="mercury.ingestion.terminal",
+            command="run-day",
+            stage="ingestion",
         )
         return EXIT_EXECUTION_FAILURE
 
@@ -439,7 +480,10 @@ def _run_ingestion_command(
                 final_status="failed",
                 failure_category="runtime_execution",
                 config=config,
-            )
+            ),
+            event_name="mercury.ingestion.terminal",
+            command="run-day",
+            stage="ingestion",
         )
         return EXIT_EXECUTION_FAILURE
 
@@ -448,7 +492,10 @@ def _run_ingestion_command(
             config=config,
             delivery_date=delivery_date,
             result=result,
-        )
+        ),
+        event_name="mercury.ingestion.terminal",
+        command="run-day",
+        stage="ingestion",
     )
     return EXIT_SUCCESS
 
@@ -459,6 +506,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     arguments = list(
         sys.argv[1:] if argv is None else argv
     )
+    requested_command = _safe_requested_command(arguments)
 
     try:
         namespace = _build_parser().parse_args(arguments)
@@ -471,7 +519,10 @@ def main(argv: Sequence[str] | None = None) -> int:
                 delivery_date=None,
                 final_status="invalid_request",
                 failure_category="command_input",
-            )
+            ),
+            event_name="mercury.command.rejected",
+            command=requested_command,
+            stage="request_validation",
         )
         return EXIT_INVALID_REQUEST
 
@@ -479,22 +530,24 @@ def main(argv: Sequence[str] | None = None) -> int:
         config = RuntimeConfig.from_environment()
     except RuntimeConfigurationError:
         if namespace.command == "check-readiness":
-            _emit_summary(
-                _empty_readiness_summary(
-                    delivery_date=delivery_date,
-                    final_status="invalid_request",
-                    failure_category="runtime_configuration",
-                )
+            summary = _empty_readiness_summary(
+                delivery_date=delivery_date,
+                final_status="invalid_request",
+                failure_category="runtime_configuration",
             )
         else:
-            _emit_summary(
-                _empty_summary(
-                    delivery_date=delivery_date,
-                    final_status="invalid_request",
-                    failure_category="runtime_configuration",
-                )
+            summary = _empty_summary(
+                delivery_date=delivery_date,
+                final_status="invalid_request",
+                failure_category="runtime_configuration",
             )
 
+        _emit_summary(
+            summary,
+            event_name="mercury.command.rejected",
+            command=namespace.command,
+            stage="runtime_configuration",
+        )
         return EXIT_INVALID_REQUEST
 
     if namespace.command == "check-readiness":
@@ -515,7 +568,10 @@ def main(argv: Sequence[str] | None = None) -> int:
             final_status="invalid_request",
             failure_category="command_input",
             config=config,
-        )
+        ),
+        event_name="mercury.command.rejected",
+        command="unknown",
+        stage="request_validation",
     )
     return EXIT_INVALID_REQUEST
 

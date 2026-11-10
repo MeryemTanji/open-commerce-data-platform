@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from datetime import date
+from datetime import date, datetime
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -79,12 +79,63 @@ def _install_successful_dependencies(
     return materializer_calls, run_dates
 
 
-def _read_summary(capsys: pytest.CaptureFixture[str]) -> dict[str, object]:
+def _read_summary(
+    capsys: pytest.CaptureFixture[str],
+) -> dict[str, object]:
     captured = capsys.readouterr()
-    lines = [line for line in captured.out.splitlines() if line.strip()]
+    lines = [
+        line
+        for line in captured.out.splitlines()
+        if line.strip()
+    ]
+
     assert len(lines) == 1
     assert captured.err == ""
-    return json.loads(lines[0])
+
+    event = json.loads(lines[0])
+
+    assert event.pop("event_schema_version") == "1.0"
+
+    occurred_at = event.pop("occurred_at")
+    assert isinstance(occurred_at, str)
+    assert occurred_at.endswith("Z")
+
+    parsed_timestamp = datetime.fromisoformat(
+        occurred_at.replace("Z", "+00:00")
+    )
+    assert parsed_timestamp.tzinfo is not None
+    assert parsed_timestamp.utcoffset() is not None
+
+    event_route = (
+        event.pop("event_name"),
+        event.pop("command"),
+        event.pop("stage"),
+    )
+
+    assert event_route in {
+        (
+            "mercury.ingestion.terminal",
+            "run-day",
+            "ingestion",
+        ),
+        (
+            "mercury.command.rejected",
+            "run-day",
+            "request_validation",
+        ),
+        (
+            "mercury.command.rejected",
+            "run-day",
+            "runtime_configuration",
+        ),
+        (
+            "mercury.command.rejected",
+            "unknown",
+            "request_validation",
+        ),
+    }
+
+    return event
 
 
 class TestSuccessfulRunDay:
